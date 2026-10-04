@@ -1,10 +1,3 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/readme-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/brand/readme-light.png">
-  <img alt="SpurGit" src="assets/brand/readme-dark.png">
-</picture>
-
-
 > [!IMPORTANT]
 > Acknowledgement: This program has been written with the help of AI
 
