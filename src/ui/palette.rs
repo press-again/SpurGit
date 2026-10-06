@@ -142,8 +142,11 @@ impl SpurShell {
         self.set_dialog_width(PALETTE_W, cx);
         self.palette_active = 0;
         self.palette_enter.release();
+        // `set_value` emits no change event, so the repository search the
+        // input normally drives has to be cleared alongside it.
         self.palette_input
             .update(cx, |state, cx| state.set_value("", window, cx));
+        self.overview.set_search("");
         self.palette_scroll.set_offset(point(px(0.), px(0.)));
         self.dialog_fade
             .retarget(1.0, motion::MENU_IN, cx.reduce_motion(), Instant::now());
