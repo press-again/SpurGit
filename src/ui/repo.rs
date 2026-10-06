@@ -298,7 +298,7 @@ impl SpurShell {
                             .mx(px(8.))
                             .my(px(6.)),
                     )
-                    .children(SideList::ALL.iter().flat_map(|list| {
+                    .children(SideList::ALL.iter().map(|list| {
                         let list = *list;
                         let ix = list.index();
                         let open = self.side_open[ix];
@@ -337,29 +337,51 @@ impl SpurShell {
                             ),
                             SideList::Tags => None,
                         };
-                        let header = side_header(list, side_count(list), open, action, cx);
-                        let mut items = vec![
-                            header
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let opening = !this.side_open[ix];
-                                    this.side_open[ix] = opening;
-                                    this.side_fade[ix].retarget_with(
-                                        motion::Curve::Menu,
-                                        if opening { 1.0 } else { 0.0 },
-                                        Duration::from_millis(150),
-                                        cx.reduce_motion(),
-                                        Instant::now(),
-                                    );
-                                    cx.notify();
-                                }))
-                                .into_any_element(),
-                        ];
+                        let header = side_header(list, side_count(list), open, open_f, action, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let opening = !this.side_open[ix];
+                                this.side_open[ix] = opening;
+                                this.side_fade[ix].retarget_with(
+                                    motion::Curve::Menu,
+                                    if opening { 1.0 } else { 0.0 },
+                                    Duration::from_millis(150),
+                                    cx.reduce_motion(),
+                                    Instant::now(),
+                                );
+                                cx.notify();
+                            }));
+                        // An open group sits on a raised card (wash + soft
+                        // shadow) that fades in with the body. On a light
+                        // theme a dark wash reads as a sunken grey, so the
+                        // card is white paper with a fainter shadow instead.
+                        let light = widgets::light_mode();
+                        let (card_bg, shadow_alpha) = if light {
+                            (gpui_kit::hsla(0., 0., 1., open_f), 0.08)
+                        } else {
+                            (ink(0.035 * open_f), 0.14)
+                        };
+                        let mut group = div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .my(px(3. * open_f))
+                            .pb(px(4. * open_f))
+                            .rounded(px(CONTROL_RADIUS + 2.))
+                            .bg(card_bg)
+                            .shadow(vec![gpui_kit::BoxShadow {
+                                color: gpui_kit::hsla(0., 0., 0., shadow_alpha * open_f),
+                                offset: gpui_kit::point(px(0.), px(1.)),
+                                blur_radius: px(3.),
+                                spread_radius: px(0.),
+                                inset: false,
+                            }])
+                            .child(header);
                         // While closing the body stays mounted until the fade
                         // reaches zero, then it is dropped.
                         if open || open_f > 0.0 {
-                            items.push(side_body(list, open_f, self, cx));
+                            group = group.child(side_body(list, open_f, self, cx));
                         }
-                        items
+                        group
                     })),
             )
             .children(self.sidebar_account(cx))
@@ -475,7 +497,8 @@ impl SpurShell {
         let pinned_header: Option<gpui_kit::AnyElement> = (!pinned_infos.is_empty()).then(|| {
             div()
                 .flex_none()
-                .px(px(8.))
+                .pl(px(20.))
+                .pr(px(8.))
                 .pt(px(4.))
                 .text_size(px(TEXT_XS))
                 .text_color(text_faint(cx))
@@ -999,18 +1022,33 @@ fn sidebar_remote_branch_row(
 }
 
 /// Shared compact sidebar-row shell (32px, hover wash, rounded). `depth`
-/// indents the row inside the branch tree.
+/// indents the row inside the branch tree; every row sits one level below
+/// its group header and draws one guide line per ancestor level, each
+/// running down from that ancestor's chevron.
 fn sidebar_row(
     key: String,
     id: (&'static str, usize),
     depth: usize,
     _cx: &mut gpui_kit::App,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let indent = 8.0 + depth as f32 * 12.0;
+    const STEP: f32 = 12.0;
+    // Center of a 12px chevron at an 8px row inset.
+    const GUIDE_X: f32 = 14.0;
+    let indent = 8.0 + (depth + 1) as f32 * STEP;
     div()
         .id(id)
+        .relative()
         .w_full()
         .cursor_pointer()
+        .children((0..=depth).map(|level| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(GUIDE_X + level as f32 * STEP))
+                .w(px(1.))
+                .bg(hairline(0.08))
+        }))
         .flex()
         .items_center()
         .gap(px(6.))
@@ -1252,6 +1290,7 @@ fn side_header(
     list: SideList,
     count: usize,
     open: bool,
+    open_f: f32,
     action: Option<gpui_kit::AnyElement>,
     cx: &Context<SpurShell>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -1264,9 +1303,13 @@ fn side_header(
             .children(action)
             .into_any_element()
     });
-    // An open group is expanded, not selected: it keeps primary text but not
-    // the selected wash, so only the current page ever reads as selected.
-    let row = side_row_shell(key, false, cx);
+    // An open group is expanded, not selected: it keeps primary text and a
+    // header wash marking the top of its card, lighter than the selected one.
+    let row = side_row_shell(key.clone(), false, cx).bg(hover_blend(
+        &key,
+        ink(0.05 * open_f),
+        ink(0.04 + 0.03 * open_f),
+    ));
     let row = if open {
         row.text_color(text_primary(cx))
     } else {
