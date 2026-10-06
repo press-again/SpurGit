@@ -200,6 +200,12 @@ pub struct Strings {
     pub rename_placeholder: &'static str,
     pub rename_confirm: &'static str,
     pub branch_pinned: &'static str,
+    // Rebase dialog
+    pub context_rebase_onto: &'static str,
+    pub rebase_onto: &'static str,
+    pub rebase_changes: &'static str,
+    pub rebase_autostash: &'static str,
+    pub rebase_confirm: &'static str,
     // Create Tag dialog
     pub tag_title: &'static str,
     pub context_push_tag: &'static str,
@@ -636,6 +642,26 @@ impl Strings {
 
     pub fn log_reverted(&self, short: &str) -> String {
         format!("reverted {short}")
+    }
+
+    pub fn log_rebased(&self, branch: &str, onto: &str) -> String {
+        format!("rebased {branch} onto {onto}")
+    }
+
+    pub fn log_no_rebase_target(&self) -> String {
+        "there is no other branch to rebase onto".to_string()
+    }
+
+    pub fn rebase_title(&self, branch: &str) -> String {
+        format!("Rebase {branch}")
+    }
+
+    pub fn rebase_body(&self, branch: &str) -> String {
+        format!("Rebase's {branch} on top of the selected branch. Conflicts abort the rebase and leave {branch} unchanged.")
+    }
+
+    pub fn context_rename_branch_named(&self, branch: &str) -> String {
+        format!("Rename branch {branch}…")
     }
 
     // ---- Undo safety net ----
@@ -1504,6 +1530,11 @@ pub static ENGLISH: Strings = Strings {
     rename_placeholder: "feature/new-name",
     rename_confirm: "Rename",
     branch_pinned: "Pinned",
+    context_rebase_onto: "Rebase onto…",
+    rebase_onto: "Onto",
+    rebase_changes: "Local changes",
+    rebase_autostash: "Stash local changes and reapply them afterwards",
+    rebase_confirm: "Rebase",
     tag_title: "Create tag",
     context_push_tag: "Push to remote…",
     context_copy_tag_name: "Copy name",

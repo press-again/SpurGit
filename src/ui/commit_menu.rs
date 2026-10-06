@@ -7,18 +7,42 @@ use super::*;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::WeakEntity;
+use gpui_kit::{DismissEvent, Focusable as _, Pixels, Point, Subscription, WeakEntity};
 
 use crate::i18n::t;
+use crate::model::RefKind;
 
 /// What the menu acts on: one loaded commit plus the checked-out branch name
-/// (for the cherry-pick label).
+/// (for the cherry-pick label) and the local branches pointing at it (for
+/// the rename items).
 #[derive(Clone)]
 pub(super) struct CommitTarget {
     pub hash: String,
     pub short: String,
     pub subject: String,
     pub current_branch: Option<String>,
+    pub local_branches: Vec<String>,
+}
+
+/// Local branch names decorating one commit.
+fn local_branches(commit: &crate::model::HistoryCommit) -> Vec<String> {
+    commit
+        .refs
+        .iter()
+        .filter(|(_, kind)| *kind == RefKind::Branch)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// The open history-row menu. The shell draws it at window level so it can
+/// open at the pointer's x just below the clicked row, which the generic
+/// context menu (always at the pointer) cannot do.
+pub(super) struct OpenCommitMenu {
+    /// The right-clicked commit, raised in the history list while open.
+    pub hash: String,
+    menu: Entity<PopupMenu>,
+    position: Point<Pixels>,
+    _dismiss: Subscription,
 }
 
 impl CommitTarget {
@@ -32,6 +56,7 @@ impl CommitTarget {
             short,
             subject: commit.subject.clone(),
             current_branch: current_branch.map(|branch| branch.to_string()),
+            local_branches: local_branches(commit),
         }
     }
 }
@@ -45,7 +70,7 @@ pub(super) fn commit_menu(
     this: WeakEntity<SpurShell>,
 ) -> PopupMenu {
     let pick = target.current_branch.clone().unwrap_or_else(|| "HEAD".to_string());
-    menu    .item(commit_item(
+    let mut menu = menu.item(commit_item(
         t().context_checkout_detached.into(),
         IconName::GitCommitHorizontal,
         ItemExplainer {
@@ -80,8 +105,22 @@ pub(super) fn commit_menu(
         target.hash.clone(),
         target.short.clone(),
         |shell, hash, _, window, cx| shell.request_create_tag(hash, window, cx),
-    ))
-    .item(commit_item(
+    ));
+    for branch in &target.local_branches {
+        let entity = this.clone();
+        let branch = branch.clone();
+        menu = menu.item(context_menu_item(
+            t().context_rename_branch_named(&branch),
+            IconName::Pencil,
+            move |_, window, cx| {
+                let branch = branch.clone();
+                entity
+                    .update(cx, |shell, cx| shell.request_rename_branch(branch, window, cx))
+                    .ok();
+            },
+        ));
+    }
+    menu.item(commit_item(
         t().cherry_pick_onto(&pick),
         IconName::Plus,
         ItemExplainer {
@@ -244,6 +283,72 @@ fn copy_item(
 }
 
 impl SpurShell {
+    /// Open the commit menu for a history row at `position` (window space).
+    /// Focus returns to wherever it was once the menu is dismissed.
+    pub(super) fn open_commit_menu(
+        &mut self,
+        target: CommitTarget,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let this = cx.entity().downgrade();
+        let hash = target.hash.clone();
+        let previous_focus = window.focused(cx);
+        let menu = PopupMenu::build(window, cx, move |menu, _, _| {
+            let menu = match previous_focus {
+                Some(handle) => menu.action_context(handle),
+                None => menu,
+            };
+            commit_menu(menu, target, this)
+        });
+        let dismiss = cx.subscribe_in(&menu, window, |this, menu, _: &DismissEvent, _, cx| {
+            // A newer menu may already have replaced this one.
+            if this
+                .commit_menu_open
+                .as_ref()
+                .is_some_and(|open| open.menu.entity_id() == menu.entity_id())
+            {
+                this.commit_menu_open = None;
+                cx.notify();
+            }
+        });
+        menu.focus_handle(cx).focus(window, cx);
+        self.commit_menu_open = Some(OpenCommitMenu {
+            hash,
+            menu,
+            position,
+            _dismiss: dismiss,
+        });
+        cx.notify();
+    }
+
+    /// The open commit menu, deferred above the window like the generic
+    /// context menu; the full-window layer keeps the history list from
+    /// scrolling out from under it.
+    pub(super) fn render_commit_menu(&self, window: &Window) -> Option<gpui_kit::AnyElement> {
+        let open = self.commit_menu_open.as_ref()?;
+        let size = window.bounds().size;
+        Some(
+            gpui_kit::deferred(
+                gpui_kit::anchored().child(
+                    div()
+                        .w(size.width)
+                        .h(size.height)
+                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                        .child(
+                            gpui_kit::anchored()
+                                .position(open.position)
+                                .snap_to_window_with_margin(px(8.))
+                                .child(open.menu.clone()),
+                        ),
+                ),
+            )
+            .with_priority(gpui_kit::base::POPUP_PRIORITY)
+            .into_any_element(),
+        )
+    }
+
     /// Queue `git checkout --detach` for one commit.
     pub(super) fn checkout_commit_detached(
         &mut self,
@@ -338,12 +443,11 @@ impl SpurShell {
     pub(super) fn selected_commit_target(&self) -> Option<CommitTarget> {
         let hash = self.selected_commit.clone()?;
         let short = hash.get(..7).unwrap_or(&hash).to_string();
-        let subject = self
-            .history
-            .iter()
-            .find(|commit| commit.hash == hash)
+        let commit = self.history.iter().find(|commit| commit.hash == hash);
+        let subject = commit
             .map(|commit| commit.subject.clone())
             .unwrap_or_default();
+        let local_branches = commit.map(local_branches).unwrap_or_default();
         let current_branch = self
             .active_snapshot()
             .and_then(|collected| collected.snapshot.branch.clone());
@@ -352,6 +456,7 @@ impl SpurShell {
             short,
             subject,
             current_branch,
+            local_branches,
         })
     }
 }

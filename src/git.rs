@@ -2242,6 +2242,52 @@ pub fn revert_commit(worktree: &str, hash: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Rebase the checked-out branch onto `onto` (Rebase dialog). The branch is
+/// rechecked first, so an external checkout cannot redirect the rebase. A
+/// rebase that stops on conflicts is aborted, leaving the branch (and any
+/// autostashed changes) exactly as before.
+pub fn rebase_onto(
+    worktree: &str,
+    expected_branch: &str,
+    onto: &str,
+    autostash: bool,
+) -> Result<(), String> {
+    if onto.trim().is_empty() || onto.starts_with('-') {
+        return Err(format!("invalid rebase target '{onto}'"));
+    }
+    let snapshot = status_snapshot(worktree)?;
+    if snapshot.branch.as_deref() != Some(expected_branch) {
+        return Err(format!(
+            "the checked-out branch changed (expected '{expected_branch}')"
+        ));
+    }
+    let stash_flag = if autostash { "--autostash" } else { "--no-autostash" };
+    let out = run_for(worktree, &["-C", worktree, "rebase", stash_flag, onto])
+        .map_err(|e| e.to_string())?;
+    if out.success() {
+        return Ok(());
+    }
+    let context = out.error_context();
+    let markers = operation_markers(worktree).unwrap_or_default();
+    if markers
+        .iter()
+        .any(|marker| marker == "rebase-merge" || marker == "rebase-apply")
+    {
+        let abort = run_for(worktree, &["-C", worktree, "rebase", "--abort"])
+            .map_err(|e| e.to_string())?;
+        if !abort.success() {
+            return Err(format!(
+                "{context}; aborting the rebase failed too: {}",
+                abort.error_context()
+            ));
+        }
+        return Err(format!(
+            "{context} (the rebase stopped on conflicts and was aborted; '{expected_branch}' is unchanged)"
+        ));
+    }
+    Err(context)
+}
+
 // ---- Reset dialog: move the checked-out branch to one commit ----
 
 /// Reset mode of the reset dialog.
@@ -5069,6 +5115,53 @@ mod wsl_tests {
         assert!(push_tag(&repo, "origin", "").is_err());
         assert!(delete_tag(&repo, "", true, &[]).is_err());
         assert!(delete_tag(&repo, "v-b", true, &["-x".to_string()]).is_err());
+    }
+
+    #[test]
+    #[ignore = "requires a WSL distro"]
+    fn rebase_onto_replays_the_branch_and_aborts_on_conflicts() {
+        let dir = wsl::temp_dir("w-rebase");
+        let home = format!("{dir}/home");
+        wsl::must(&["mkdir", "-p", &home]);
+        wsl::write_file(
+            &format!("{home}/.gitconfig"),
+            b"[user]\n\tname = Spur Test\n\temail = spur@test.invalid\n",
+        );
+        let repo = format!("{dir}/repo");
+        let commit_all = |message: &str| {
+            wsl::must_env(&home, &["git", "-C", &repo, "add", "-A"]);
+            wsl::must_env(&home, &["git", "-C", &repo, "commit", "-q", "-m", message]);
+        };
+        init_repo(&home, &repo);
+        wsl::must_env(&home, &["git", "-C", &repo, "checkout", "-q", "-b", "feature"]);
+        wsl::write_file(&format!("{repo}/feature.txt"), b"feature\n");
+        commit_all("feature work");
+        wsl::must_env(&home, &["git", "-C", &repo, "checkout", "-q", "main"]);
+        wsl::write_file(&format!("{repo}/main.txt"), b"main\n");
+        commit_all("main work");
+        let main_tip = rev(&repo, "main");
+        wsl::must_env(&home, &["git", "-C", &repo, "checkout", "-q", "feature"]);
+
+        // Wrong expected branch and option-looking targets are refused.
+        assert!(rebase_onto(&repo, "main", "main", false).is_err());
+        assert!(rebase_onto(&repo, "feature", "-x", false).is_err());
+
+        // A clean rebase puts the feature commit on top of main.
+        rebase_onto(&repo, "feature", "main", false).expect("clean rebase");
+        assert_eq!(rev(&repo, "feature~1"), main_tip);
+
+        // A conflicting rebase is aborted and leaves the branch untouched.
+        wsl::write_file(&format!("{repo}/file.txt"), b"feature side\n");
+        commit_all("feature edit");
+        let feature_tip = rev(&repo, "feature");
+        wsl::must_env(&home, &["git", "-C", &repo, "checkout", "-q", "main"]);
+        wsl::write_file(&format!("{repo}/file.txt"), b"main side\n");
+        commit_all("main edit");
+        wsl::must_env(&home, &["git", "-C", &repo, "checkout", "-q", "feature"]);
+        let err = rebase_onto(&repo, "feature", "main", false).expect_err("conflict");
+        assert!(err.contains("aborted"), "{err}");
+        assert_eq!(rev(&repo, "feature"), feature_tip);
+        assert!(!wsl::exists(&format!("{repo}/.git/rebase-merge")));
     }
 
     #[test]

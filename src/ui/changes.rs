@@ -240,6 +240,8 @@ pub(super) enum ChangeOp {
     CherryPick(CherryPickOp),
     /// Revert one commit (commit context menu).
     Revert(RevertOp),
+    /// Rebase the checked-out branch onto another ref (rebase dialog).
+    Rebase(RebaseOp),
     /// Reset the checked-out branch to one commit (reset dialog).
     Reset(ResetOp),
     /// Create a tag at one commit (tag dialog).
@@ -447,6 +449,15 @@ pub(super) struct RevertOp {
     pub repo_id: String,
     pub hash: String,
     pub short: String,
+}
+
+/// A queued rebase of the checked-out branch (rebase dialog).
+#[derive(Clone, Debug)]
+pub(super) struct RebaseOp {
+    pub repo_id: String,
+    pub branch: String,
+    pub onto: String,
+    pub autostash: bool,
 }
 
 /// A queued branch reset to one commit (reset dialog). The branch and
@@ -1247,6 +1258,7 @@ impl SpurShell {
             ChangeOp::DeleteBranch(op) => op.repo_id.clone(),
             ChangeOp::CherryPick(op) => op.repo_id.clone(),
             ChangeOp::Revert(op) => op.repo_id.clone(),
+            ChangeOp::Rebase(op) => op.repo_id.clone(),
             ChangeOp::Reset(op) => op.repo_id.clone(),
             ChangeOp::TagCreate(op) => op.repo_id.clone(),
             ChangeOp::TagPush(op) => op.repo_id.clone(),
@@ -1392,6 +1404,7 @@ impl SpurShell {
             }
             ChangeOp::CherryPick(op) => (t().log_cherry_picked(&op.short), "cherry-pick"),
             ChangeOp::Revert(op) => (t().log_reverted(&op.short), "revert"),
+            ChangeOp::Rebase(op) => (t().log_rebased(&op.branch, &op.onto), "rebase"),
             ChangeOp::Reset(op) => (
                 t().log_reset_to(op.branch.as_deref().unwrap_or("HEAD"), &op.short),
                 "reset",
@@ -1458,6 +1471,7 @@ impl SpurShell {
             | ChangeOp::DeleteBranch(_)
             | ChangeOp::CherryPick(_)
             | ChangeOp::Revert(_)
+            | ChangeOp::Rebase(_)
             | ChangeOp::Reset(_)
             | ChangeOp::TagCreate(_)
             | ChangeOp::TagPush(_)
@@ -1658,6 +1672,12 @@ impl SpurShell {
                         }
                         ChangeOp::CherryPick(op) => crate::git::cherry_pick(&worktree, &op.hash),
                         ChangeOp::Revert(op) => crate::git::revert_commit(&worktree, &op.hash),
+                        ChangeOp::Rebase(op) => crate::git::rebase_onto(
+                            &worktree,
+                            &op.branch,
+                            &op.onto,
+                            op.autostash,
+                        ),
                         ChangeOp::Reset(op) => crate::git::reset_branch(
                             &worktree,
                             &op.target,
