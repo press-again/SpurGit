@@ -11,7 +11,6 @@ use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::Input;
-use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Sizable as _};
 use gpui_kit::{
     canvas, fill, hsla, point, px, quad, size, uniform_list, AnyElement, App, BorderStyle,
@@ -511,6 +510,10 @@ impl SpurShell {
         let exhausted = self.history_exhausted;
         let selected = self.selected_commit.clone();
         let highlight = self.history_target.clone();
+        let menu_target = self
+            .commit_menu_open
+            .as_ref()
+            .map(|open| open.hash.clone());
         // The checked-out branch names the ref chip that gets emphasized.
         let current_branch: Option<SharedString> = self
             .active_snapshot()
@@ -557,6 +560,8 @@ impl SpurShell {
                                     selected: selected.as_deref()
                                         == Some(commits[ix].hash.as_str()),
                                     highlighted: highlight.as_deref()
+                                        == Some(commits[ix].hash.as_str()),
+                                    menu_target: menu_target.as_deref()
                                         == Some(commits[ix].hash.as_str()),
                                     current_branch: current_branch.clone(),
                                     graph: metrics,
@@ -721,6 +726,8 @@ struct GraphMetrics {
 struct RowContext {
     selected: bool,
     highlighted: bool,
+    /// The row whose context menu is open; it sits on a raised card.
+    menu_target: bool,
     /// Checked-out branch, so its ref chip can be emphasized.
     current_branch: Option<SharedString>,
     graph: GraphMetrics,
@@ -737,6 +744,7 @@ fn commit_row(
     let RowContext {
         selected,
         highlighted,
+        menu_target,
         current_branch,
         graph,
     } = ctx;
@@ -772,10 +780,24 @@ fn commit_row(
     } else {
         row
     };
+    // The checked-out commit keeps its violet wash under the shadow.
+    if menu_target {
+        let (card_bg, card_shadow) = raised_surface(1.0);
+        row = row.shadow(card_shadow);
+        if !is_head {
+            row = row.bg(card_bg);
+        }
+    }
 
+    // The graph canvas spans the full row height, so its bounds give the
+    // row's top edge for placing the context menu below the row.
+    let row_top = Rc::new(std::cell::Cell::new(px(0.)));
+    let canvas_top = row_top.clone();
     row = row.child(
         canvas(
-            |_: Bounds<Pixels>, _: &mut Window, _: &mut App| (),
+            move |bounds: Bounds<Pixels>, _: &mut Window, _: &mut App| {
+                canvas_top.set(bounds.origin.y)
+            },
             move |bounds, _, window, cx| paint_graph(bounds, &graph_row, graph.lane_w, window, cx),
         )
         .w(graph.width)
@@ -849,10 +871,17 @@ fn commit_row(
                 .ok();
         }
     })
-    .context_menu({
+    .on_mouse_down(gpui_kit::MouseButton::Right, {
         let target = super::commit_menu::CommitTarget::of(commit, current_branch.clone());
         let entity = this.clone();
-        move |menu, _, _| super::commit_menu::commit_menu(menu, target.clone(), entity.clone())
+        move |event, window, cx| {
+            let position = point(event.position.x, row_top.get() + px(ROW_H));
+            entity
+                .update(cx, |this, cx| {
+                    this.open_commit_menu(target.clone(), position, window, cx)
+                })
+                .ok();
+        }
     })
     .into_any_element()
 }

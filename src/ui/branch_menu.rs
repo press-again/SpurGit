@@ -1,13 +1,15 @@
-//! Branch row menu: checkout, rename, delete, and pin.
+//! Branch row menu: checkout, rebase (checked-out branch), rename, delete,
+//! and pin.
 //!
-//! Merge, rebase, compare, and push/upstream actions are deliberately absent:
-//! the menu grows with those features instead of offering dead rows.
+//! Merge, compare, and push/upstream actions are deliberately absent: the
+//! menu grows with those features instead of offering dead rows.
 
 use super::*;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::PopupMenu;
+use gpui_kit::component::button::{Button, ButtonVariants as _, DropdownButton};
+use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme, Disableable as _, Icon, Sizable as _};
 use gpui_kit::{IntoElement, WeakEntity};
 use gpui_kit::SharedString;
@@ -20,6 +22,16 @@ use crate::i18n::t;
 pub(super) struct RenameRequest {
     pub repo_id: String,
     pub old: String,
+}
+
+/// Rebase dialog state: the checked-out branch, the chosen target, and
+/// whether local changes are stashed around the rebase.
+#[derive(Clone, Debug)]
+pub(super) struct RebaseRequest {
+    pub repo_id: String,
+    pub branch: String,
+    pub onto: String,
+    pub autostash: bool,
 }
 
 /// First delete confirm: the branch plus its repo identity.
@@ -38,16 +50,18 @@ pub(super) struct RefusedDelete {
 }
 
 /// The branch row menu: checkout plus rename/delete/pin and the tree sort
-/// toggle. `pinned` selects the Pin/Unpin label; `sort` selects which sort
-/// direction the toggle offers.
+/// toggle; the checked-out branch (`current`) also offers a rebase. `pinned`
+/// selects the Pin/Unpin label; `sort` selects which sort direction the
+/// toggle offers.
 pub(super) fn branch_menu(
     menu: PopupMenu,
     name: String,
+    current: bool,
     pinned: bool,
     sort: crate::settings::BranchSort,
     this: WeakEntity<SpurShell>,
 ) -> PopupMenu {
-    menu.item({
+    let mut menu = menu.item({
         let entity = this.clone();
         let branch = name.clone();
         context_menu_item(
@@ -60,8 +74,20 @@ pub(super) fn branch_menu(
                     .ok();
             },
         )
-    })
-    .item({
+    });
+    if current {
+        let entity = this.clone();
+        menu = menu.item(context_menu_item(
+            t().context_rebase_onto.into(),
+            IconName::GitCompare,
+            move |_, _, cx| {
+                entity
+                    .update(cx, |shell, cx| shell.request_rebase(cx))
+                    .ok();
+            },
+        ));
+    }
+    menu.item({
         let entity = this.clone();
         let branch = name.clone();
         context_menu_item(
@@ -319,6 +345,79 @@ impl SpurShell {
         self.close_modal(cx);
     }
 
+    /// Branches the checked-out `branch` can be rebased onto: the other local
+    /// branches, then the remote-tracking ones.
+    fn rebase_targets(&self, branch: &str) -> Vec<String> {
+        self.branches
+            .iter()
+            .map(|info| info.name.clone())
+            .filter(|name| name != branch)
+            .chain(
+                self.remote_branches
+                    .iter()
+                    .filter(|remote| remote.name != "HEAD")
+                    .map(|remote| format!("{}/{}", remote.remote, remote.name)),
+            )
+            .collect()
+    }
+
+    /// Open the rebase dialog for the checked-out branch, preselecting the
+    /// repository's default branch and stashing only when the tree is dirty.
+    pub(super) fn request_rebase(&mut self, cx: &mut Context<Self>) {
+        let Some(branch) = self.current_branch_name() else {
+            self.note_error(t().log_no_current_branch(), cx);
+            return;
+        };
+        let Some(repo) = self.active_repo() else {
+            return;
+        };
+        let repo_id = repo.path.to_string_lossy().into_owned();
+        let targets = self.rebase_targets(&branch);
+        let default = self
+            .active_snapshot()
+            .and_then(|collected| collected.refs.default_branch.clone());
+        let Some(onto) = default
+            .filter(|name| targets.contains(name))
+            .or_else(|| targets.first().cloned())
+        else {
+            self.note_error(t().log_no_rebase_target(), cx);
+            return;
+        };
+        let autostash = self
+            .active_snapshot()
+            .is_some_and(|collected| !collected.snapshot.is_clean());
+        self.rebase_request = Some(RebaseRequest {
+            repo_id,
+            branch,
+            onto,
+            autostash,
+        });
+        self.open_modal(cx);
+        cx.notify();
+    }
+
+    pub(super) fn cancel_rebase(&mut self, cx: &mut Context<Self>) {
+        if self.rebase_request.is_some() {
+            self.close_modal(cx);
+        }
+    }
+
+    /// Confirmed: queue the rebase on the shared sequential change queue.
+    pub(super) fn confirm_rebase(&mut self, cx: &mut Context<Self>) {
+        let Some(request) = self.rebase_request.clone() else {
+            return;
+        };
+        self.change_ops
+            .push_back(changes::ChangeOp::Rebase(changes::RebaseOp {
+                repo_id: request.repo_id,
+                branch: request.branch,
+                onto: request.onto,
+                autostash: request.autostash,
+            }));
+        self.pump_change_ops(cx);
+        self.close_modal(cx);
+    }
+
     /// Palette: rename the checked-out branch.
     pub(super) fn rename_current_branch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(branch) = self
@@ -370,6 +469,92 @@ impl SpurShell {
             t().rename_confirm,
             Self::confirm_rename_branch,
             can_rename,
+            false,
+        )
+    }
+
+    /// Full-window scrim + card for the rebase dialog: target dropdown and
+    /// the autostash toggle.
+    pub(super) fn render_rebase_dialog(
+        &self,
+        request: RebaseRequest,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let this = cx.entity().downgrade();
+        let targets = self.rebase_targets(&request.branch);
+        let onto = request.onto.clone();
+        let menu_entity = this.clone();
+        let onto_menu = DropdownButton::new("rebase-onto")
+            .button(
+                Button::new("rebase-onto-btn")
+                    .label(truncate_label(&request.onto, 32))
+                    .ghost()
+                    .xsmall(),
+            )
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu.scrollable(true).max_h(px(320.));
+                for name in &targets {
+                    let entity = menu_entity.clone();
+                    let picked = name.clone();
+                    let label = name.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_window, _cx| {
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .self_stretch()
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(truncate_label(&label, 42))
+                        })
+                        .checked(name == &onto)
+                        .on_click(move |_, _, cx| {
+                            let picked = picked.clone();
+                            entity
+                                .update(cx, |this, cx| {
+                                    if let Some(request) = this.rebase_request.as_mut() {
+                                        request.onto = picked;
+                                    }
+                                    cx.notify();
+                                })
+                                .ok();
+                        }),
+                    );
+                }
+                menu
+            });
+        let autostash = Checkbox::new("rebase-autostash")
+            .checked(request.autostash)
+            .label(t().rebase_autostash)
+            .on_change(move |checked, _, cx| {
+                let checked = *checked;
+                this.update(cx, |this, cx| {
+                    if let Some(request) = this.rebase_request.as_mut() {
+                        request.autostash = checked;
+                    }
+                    cx.notify();
+                })
+                .ok();
+            });
+        confirm_card(
+            cx,
+            "rebase",
+            IconName::GitCompare,
+            violet(cx),
+            t().rebase_title(&request.branch),
+            Some(t().rebase_body(&request.branch)),
+            vec![
+                (t().rebase_onto, select_shell(onto_menu).into_any_element()),
+                (t().rebase_changes, autostash.into_any_element()),
+            ],
+            t().cancel,
+            Self::cancel_rebase,
+            t().rebase_confirm,
+            Self::confirm_rebase,
+            true,
             false,
         )
     }

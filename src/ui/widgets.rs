@@ -48,6 +48,25 @@ pub(super) fn hairline(alpha: f32) -> Hsla {
     wash(alpha)
 }
 
+/// Raised-card surface at strength `f` (0 = flat, 1 = fully raised): a
+/// wash plus a soft shadow. On a light theme a dark wash reads as a sunken
+/// grey, so the card is white paper with a fainter shadow instead.
+pub(super) fn raised_surface(f: f32) -> (Hsla, Vec<gpui_kit::BoxShadow>) {
+    let (bg, shadow_alpha) = if light_mode() {
+        (hsla(0., 0., 1., f), 0.12)
+    } else {
+        (wash(0.05 * f), 0.24)
+    };
+    let shadow = gpui_kit::BoxShadow {
+        color: hsla(0., 0., 0., shadow_alpha * f),
+        offset: gpui_kit::point(px(0.), px(2.)),
+        blur_radius: px(6.),
+        spread_radius: px(0.),
+        inset: false,
+    };
+    (bg, vec![shadow])
+}
+
 /// The one small type scale (logical px).
 pub(super) const TEXT_XS: f32 = 11.0; // section labels, counts, kbd hints
 pub(super) const TEXT_SM: f32 = 12.0; // dense metadata, logs

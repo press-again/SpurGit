@@ -485,6 +485,9 @@ pub(super) fn capture_backup(
         },
         changes::ChangeOp::CherryPick(op) => capture_head(worktree, &op.short),
         changes::ChangeOp::Revert(op) => capture_head(worktree, &op.short),
+        changes::ChangeOp::Rebase(op) => {
+            capture_head(worktree, &format!("rebase onto {}", op.onto))
+        }
         changes::ChangeOp::Reset(op) => capture_reset(worktree, op, label),
         changes::ChangeOp::TagDelete(op) => {
             if !op.local {

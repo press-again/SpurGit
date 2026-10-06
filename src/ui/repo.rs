@@ -350,16 +350,9 @@ impl SpurShell {
                                 );
                                 cx.notify();
                             }));
-                        // An open group sits on a raised card (wash + soft
-                        // shadow) that fades in with the body. On a light
-                        // theme a dark wash reads as a sunken grey, so the
-                        // card is white paper with a fainter shadow instead.
-                        let light = widgets::light_mode();
-                        let (card_bg, shadow_alpha) = if light {
-                            (gpui_kit::hsla(0., 0., 1., open_f), 0.08)
-                        } else {
-                            (ink(0.035 * open_f), 0.14)
-                        };
+                        // An open group sits on a raised card that fades in
+                        // with the body.
+                        let (card_bg, card_shadow) = raised_surface(open_f);
                         let mut group = div()
                             .flex()
                             .flex_col()
@@ -368,13 +361,7 @@ impl SpurShell {
                             .pb(px(4. * open_f))
                             .rounded(px(CONTROL_RADIUS + 2.))
                             .bg(card_bg)
-                            .shadow(vec![gpui_kit::BoxShadow {
-                                color: gpui_kit::hsla(0., 0., 0., shadow_alpha * open_f),
-                                offset: gpui_kit::point(px(0.), px(1.)),
-                                blur_radius: px(3.),
-                                spread_radius: px(0.),
-                                inset: false,
-                            }])
+                            .shadow(card_shadow)
                             .child(header);
                         // While closing the body stays mounted until the fade
                         // reaches zero, then it is dropped.
@@ -480,12 +467,14 @@ impl SpurShell {
                 let ix = PINNED_ID_OFFSET + position;
                 let entity = pinned_ctx.this.clone();
                 let name = info.name.clone();
+                let current = info.current;
                 let leaf = branch_tree::branch_leaf(&info.name);
                 sidebar_branch_row(ix, info, &leaf, 0, pinned_ctx.default.as_deref(), cx)
                     .context_menu(move |menu, _, _| {
                         super::branch_menu::branch_menu(
                             menu,
                             name.clone(),
+                            current,
                             true,
                             pinned_ctx.sort,
                             entity.clone(),
@@ -1171,12 +1160,14 @@ fn branch_row_at(
             let entity = ctx.this.clone();
             let branch_name = branches[*index].name.clone();
             let pinned = ctx.pinned_names.contains(&branch_name);
+            let current = branches[*index].current;
             let sort = ctx.sort;
             sidebar_branch_row(ix, &branches[*index], leaf, *depth, ctx.default.as_deref(), cx)
                 .context_menu(move |menu, _, _| {
                     super::branch_menu::branch_menu(
                         menu,
                         branch_name.clone(),
+                        current,
                         pinned,
                         sort,
                         entity.clone(),

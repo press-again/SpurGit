@@ -329,6 +329,8 @@ pub struct SpurShell {
     pinned_branch_rows: Rc<Vec<crate::status::BranchInfo>>,
     /// Rename-branch dialog state and its name input.
     rename_request: Option<branch_menu::RenameRequest>,
+    rebase_request: Option<branch_menu::RebaseRequest>,
+    commit_menu_open: Option<commit_menu::OpenCommitMenu>,
     branch_rename_input: Entity<InputState>,
     /// Delete-branch confirm (first) and force-delete confirm (unmerged).
     branch_delete_request: Option<branch_menu::BranchDeleteRequest>,
@@ -1041,6 +1043,8 @@ impl SpurShell {
             branch_tree_branches: Rc::new(Vec::new()),
             pinned_branch_rows: Rc::new(Vec::new()),
             rename_request: None,
+            rebase_request: None,
+            commit_menu_open: None,
             branch_rename_input,
             branch_delete_request: None,
             branch_delete_refused: None,
@@ -2001,6 +2005,7 @@ impl SpurShell {
         self.branch_request = None;
         self.tag_request = None;
         self.rename_request = None;
+        self.rebase_request = None;
         self.branch_delete_request = None;
         self.branch_delete_refused = None;
         self.remote_request = None;
@@ -2512,6 +2517,9 @@ impl Render for SpurShell {
         let rename_overlay = self.rename_request.clone().map(|request| {
             modal_fade_layer(self.render_rename_dialog(request, cx).into_any_element(), modal_t)
         });
+        let rebase_overlay = self.rebase_request.clone().map(|request| {
+            modal_fade_layer(self.render_rebase_dialog(request, cx).into_any_element(), modal_t)
+        });
         let branch_delete_overlay = self.branch_delete_request.clone().map(|request| {
             modal_fade_layer(
                 self.render_branch_delete_confirm(request, cx).into_any_element(),
@@ -2840,6 +2848,10 @@ impl Render for SpurShell {
                     this.cancel_rename_branch(cx);
                     return;
                 }
+                if this.rebase_request.is_some() {
+                    this.cancel_rebase(cx);
+                    return;
+                }
                 if this.branch_delete_request.is_some() {
                     this.cancel_branch_delete(cx);
                     return;
@@ -2987,6 +2999,7 @@ impl Render for SpurShell {
             .children(stash_branch_overlay)
             .children(branch_overlay)
             .children(rename_overlay)
+            .children(rebase_overlay)
             .children(branch_delete_overlay)
             .children(branch_force_overlay)
             .children(tag_overlay)
@@ -3009,6 +3022,7 @@ impl Render for SpurShell {
             // Menu explainer: root-level like the other overlays, so its
             // window-space row coordinates land exactly (the card itself
             // paints deferred, beside the menu rather than under it).
+            .children(self.render_commit_menu(window))
             .children(self.render_explainer(window, cx));
         let root = root.children(Root::render_notification_layer(window, cx));
 
