@@ -20,9 +20,8 @@ const SUBJECT_LIMIT: usize = 50;
 /// SourceGit's subject guide: the 80-column mark inside the message editor.
 const SUBJECT_GUIDE_COL: usize = 80;
 /// The kit's multi-line editor lays the text out inside medium paddings
-/// (`Size::Medium`); overlay guides are positioned from text bounds and add
-/// this inset so they line up with the glyphs.
-const EDITOR_PAD_TOP: f32 = 8.0;
+/// (`Size::Medium`); overlay guides add this inset so they line up with the
+/// glyphs.
 const EDITOR_PAD_LEFT: f32 = 10.0;
 
 /// Byte range of the SourceGit-style subject: everything up to the first
@@ -63,16 +62,13 @@ fn commit_guides(
     state: &Entity<TextareaState>,
     cx: &App,
 ) -> Option<impl IntoElement> {
-    let state = state.read(cx);
-    let message = state.value();
-    let range = commit_subject_range(&message);
-    if range.is_empty() {
+    let editor = state.read(cx);
+    if commit_subject_range(&editor.value()).is_empty() || editor.text_bounds().is_none() {
         return None;
     }
-    let end = state.range_to_bounds(&range)?;
-    let text_bounds = state.text_bounds()?;
-    let y = end.bottom() - text_bounds.top() + px(EDITOR_PAD_TOP);
     let guide_color = hairline(0.14);
+    let label_color = text_faint(cx);
+    let state = state.clone();
 
     Some(
         div()
@@ -93,26 +89,93 @@ fn commit_guides(
                     .border_color(guide_color),
             )
             .child(
-                // Rule at the end of the subject block with its label. The
-                // width comes from the editor's own text bounds, so it tracks
-                // wrapped subjects.
-                div()
-                    .absolute()
-                    .top(y)
-                    .left(px(EDITOR_PAD_LEFT))
-                    .w(text_bounds.size.width)
-                    .flex()
-                    .justify_end()
-                    .border_t_1()
-                    .border_dashed()
-                    .border_color(guide_color)
-                    .italic()
-                    .font_family(MONO)
-                    .text_size(px(10.))
-                    .text_color(text_faint(cx))
-                    .child(t().commit_subject_end),
+                // The rule paints after the editor in the same frame, so it
+                // reads the layout being drawn instead of the previous one.
+                gpui_kit::canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        paint_subject_rule(&state, bounds, guide_color, label_color, window, cx)
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
             ),
     )
+}
+
+/// Paint the subject-end rule with its right-aligned label. The width comes
+/// from the editor's own text bounds, so it tracks wrapped subjects.
+fn paint_subject_rule(
+    state: &Entity<TextareaState>,
+    bounds: gpui_kit::Bounds<gpui_kit::Pixels>,
+    line_color: gpui_kit::Hsla,
+    label_color: gpui_kit::Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    const LABEL_H: f32 = 12.0;
+    let editor = state.read(cx);
+    let message = editor.value();
+    let range = commit_subject_range(&message);
+    if range.is_empty() {
+        return;
+    }
+    // The editor only lays out the lines in view; outside them
+    // `range_to_bounds` snaps to the first visible line, so the rule is
+    // skipped while the subject's last line is scrolled out.
+    let end_line = message[..range.end].matches('\n').count();
+    if !editor
+        .visible_row_range()
+        .is_some_and(|visible| visible.contains(&end_line))
+    {
+        return;
+    }
+    let (Some(text_bounds), Some(end)) = (editor.text_bounds(), editor.range_to_bounds(&range))
+    else {
+        return;
+    };
+    let rule = gpui_kit::Bounds::new(
+        gpui_kit::point(bounds.left() + px(EDITOR_PAD_LEFT), end.bottom()),
+        gpui_kit::size(text_bounds.size.width, px(LABEL_H)),
+    );
+    window.paint_quad(gpui_kit::quad(
+        rule,
+        px(0.),
+        gpui_kit::transparent_black(),
+        gpui_kit::Edges {
+            top: px(1.),
+            ..Default::default()
+        },
+        line_color,
+        gpui_kit::BorderStyle::Dashed,
+    ));
+    let label: SharedString = t().commit_subject_end.into();
+    let run = gpui_kit::TextRun {
+        len: label.len(),
+        font: gpui_kit::Font {
+            style: gpui_kit::FontStyle::Italic,
+            ..gpui_kit::font(MONO)
+        },
+        color: label_color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let shaped = window
+        .text_system()
+        .shape_line(label, px(10.), &[run], None);
+    shaped
+        .paint(
+            rule.origin,
+            px(LABEL_H),
+            gpui_kit::TextAlign::Right,
+            Some(rule.size.width),
+            window,
+            cx,
+        )
+        .ok();
 }
 
 impl SpurShell {
