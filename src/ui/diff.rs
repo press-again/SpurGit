@@ -863,9 +863,17 @@ fn hunk_overlay(
         .border_1()
         .border_color(violet(cx).alpha(0.55))
         .rounded(px(3.));
+    // Small buttons (24px) plus the bar's padding and border.
+    const BAR_H: f32 = 24.0 + 2.0 * 3.0 + 2.0;
+    const BAR_INSET: f32 = 3.0;
+    // Sticky: once the hunk's top scrolls out, the bar stays pinned to the
+    // pane's top edge until it reaches the hunk's bottom.
+    let natural = top + px(BAR_INSET);
+    let last = (top + height - px(BAR_H + BAR_INSET)).max(natural);
+    let bar_top = natural.max(px(BAR_INSET)).min(last);
     let bar = div()
         .absolute()
-        .top(top + px(3.))
+        .top(bar_top)
         .right(px(10.))
         .flex()
         .items_center()
