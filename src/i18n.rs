@@ -56,6 +56,7 @@ pub struct Strings {
     pub pull_changes_discard_hint: &'static str,
     pub pull_rebase: &'static str,
     pub pull_confirm: &'static str,
+    pub pull_checkout: &'static str,
     // Tabs
     pub tooltip_open_repo: &'static str,
 
@@ -547,6 +548,9 @@ impl Strings {
     /// Progress caption under a running pull modal.
     pub fn pull_running(&self, remote: &str, branch: &str) -> String {
         format!("Pulling {remote}/{branch}…")
+    }
+    pub fn pull_checkout_hint(&self, remote: &str, branch: &str, local: &str) -> String {
+        format!("{remote}/{branch} has no local branch yet. Check it out to work on it, or pull it into {local}.")
     }
 
     /// Operation-log line after handing a URL to the default browser.
@@ -1412,6 +1416,7 @@ pub static ENGLISH: Strings = Strings {
     pull_changes_discard_hint: "Move all changes into a stash and pull without reapplying",
     pull_rebase: "Use rebase instead of merge",
     pull_confirm: "Pull",
+    pull_checkout: "Check out as local branch",
 
     tooltip_open_repo: "Open repository (Ctrl K)",
 

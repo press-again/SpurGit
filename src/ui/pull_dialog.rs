@@ -90,8 +90,8 @@ impl SpurShell {
             .or_else(|| remotes.iter().any(|name| name == "origin").then(|| "origin".to_string()))
             .unwrap_or_else(|| remotes[0].clone());
         // Default branch: the upstream branch when it lives on the chosen
-        // remote, otherwise the first candidate (the local branch name is
-        // always one, so the selector is never empty).
+        // remote, otherwise the same name as the local branch (always one of
+        // the options, so a pull never defaults to an unrelated branch).
         let options = self.remote_branch_options(&remote, &local, upstream.as_deref());
         let branch = upstream
             .as_deref()
@@ -99,7 +99,7 @@ impl SpurShell {
             .filter(|(upstream_remote, _)| *upstream_remote == remote.as_str())
             .map(|(_, branch)| branch.to_string())
             .filter(|branch| options.contains(branch))
-            .unwrap_or_else(|| options.first().cloned().unwrap_or_else(|| local.clone()));
+            .unwrap_or_else(|| local.clone());
         self.pull_request = Some(PullRequest {
             repo_id,
             local,
@@ -144,6 +144,29 @@ impl SpurShell {
                 changes: request.changes,
             }));
         self.pump_change_ops(cx);
+    }
+
+    /// True when the selected remote branch is neither the checked-out
+    /// branch's counterpart nor present locally: checking it out is then the
+    /// likelier intent than merging it into the checked-out branch.
+    fn pull_offers_checkout(&self, request: &PullRequest) -> bool {
+        let upstream = request.upstream.as_deref().and_then(split_upstream);
+        request.branch != request.local
+            && upstream != Some((request.remote.as_str(), request.branch.as_str()))
+            && !self.branches.iter().any(|branch| branch.name == request.branch)
+    }
+
+    /// Alternative to the pull: create a tracking local branch for the
+    /// selected remote branch and switch to it.
+    pub(super) fn checkout_from_pull(&mut self, cx: &mut Context<Self>) {
+        let Some(request) = self.pull_request.clone() else {
+            return;
+        };
+        if request.busy {
+            return;
+        }
+        self.close_modal(cx);
+        self.checkout_remote_branch(request.remote, request.branch, cx);
     }
 
     /// Full-window scrim + card shown while the dialog is open.
@@ -205,13 +228,10 @@ impl SpurShell {
                                     if let Some(request) = this.pull_request.as_mut() {
                                         request.remote = picked.clone();
                                         // A branch that is not offered by the
-                                        // new remote falls back to the first
-                                        // candidate.
+                                        // new remote falls back to the local
+                                        // branch's name.
                                         if !options.contains(&request.branch) {
-                                            request.branch = options
-                                                .first()
-                                                .cloned()
-                                                .unwrap_or_else(|| local.clone());
+                                            request.branch = local.clone();
                                         }
                                     }
                                     cx.notify();
@@ -352,6 +372,7 @@ impl SpurShell {
 
         let rebase_entity = cx.entity().downgrade();
         let can_pull = !request.branch.is_empty() && !remotes.is_empty() && !request.busy;
+        let offers_checkout = self.pull_offers_checkout(&request);
 
         div()
             .absolute()
@@ -461,6 +482,16 @@ impl SpurShell {
                     .children(request.busy.then(|| {
                         busy_bar(t().pull_running(&request.remote, &request.branch), true, cx)
                     }))
+                    .children(offers_checkout.then(|| {
+                        div()
+                            .text_size(px(TEXT_XS))
+                            .text_color(text_muted(cx))
+                            .child(t().pull_checkout_hint(
+                                &request.remote,
+                                &request.branch,
+                                &request.local,
+                            ))
+                    }))
                     .child(
                         div()
                             .flex()
@@ -475,15 +506,30 @@ impl SpurShell {
                                     .disabled(request.busy)
                                     .on_click(cx.listener(|this, _, _, cx| this.cancel_pull(cx))),
                             )
-                            .child(
-                                Button::new("pull-confirm")
+                            .child({
+                                let pull = Button::new("pull-confirm")
                                     .label(t().pull_confirm)
+                                    .small()
+                                    .disabled(!can_pull)
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| this.confirm_pull(cx)));
+                                if offers_checkout {
+                                    pull.outline()
+                                } else {
+                                    pull.primary()
+                                }
+                            })
+                            .children(offers_checkout.then(|| {
+                                Button::new("pull-checkout")
+                                    .label(t().pull_checkout)
                                     .small()
                                     .primary()
                                     .disabled(!can_pull)
                                     .cursor_pointer()
-                                    .on_click(cx.listener(|this, _, _, cx| this.confirm_pull(cx))),
-                            ),
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.checkout_from_pull(cx)),
+                                    )
+                            })),
                     ),
             )
             .into_any_element()
