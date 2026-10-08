@@ -7,7 +7,7 @@ use super::*;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::{DismissEvent, Focusable as _, Pixels, Point, Subscription, WeakEntity};
+use gpui_kit::{Pixels, Point, WeakEntity};
 
 use crate::i18n::t;
 use crate::model::RefKind;
@@ -32,17 +32,6 @@ fn local_branches(commit: &crate::model::HistoryCommit) -> Vec<String> {
         .filter(|(_, kind)| *kind == RefKind::Branch)
         .map(|(name, _)| name.clone())
         .collect()
-}
-
-/// The open history-row menu. The shell draws it at window level so it can
-/// open at the pointer's x just below the clicked row, which the generic
-/// context menu (always at the pointer) cannot do.
-pub(super) struct OpenCommitMenu {
-    /// The right-clicked commit, raised in the history list while open.
-    pub hash: String,
-    menu: Entity<PopupMenu>,
-    position: Point<Pixels>,
-    _dismiss: Subscription,
 }
 
 impl CommitTarget {
@@ -294,69 +283,13 @@ impl SpurShell {
     ) {
         let this = cx.entity().downgrade();
         let hash = target.hash.clone();
-        let previous_focus = window.focused(cx);
-        let menu = PopupMenu::build(window, cx, move |menu, _, _| {
-            let menu = match previous_focus {
-                Some(handle) => menu.action_context(handle),
-                None => menu,
-            };
-            commit_menu(menu, target, this)
-        });
-        let dismiss = cx.subscribe_in(&menu, window, |this, menu, _: &DismissEvent, _, cx| {
-            // A newer menu may already have replaced this one.
-            if this
-                .commit_menu_open
-                .as_ref()
-                .is_some_and(|open| open.menu.entity_id() == menu.entity_id())
-            {
-                this.commit_menu_open = None;
-                cx.notify();
-            }
-        });
-        menu.focus_handle(cx).focus(window, cx);
-        self.commit_menu_open = Some(OpenCommitMenu {
+        self.open_row_menu(
             hash,
-            menu,
             position,
-            _dismiss: dismiss,
-        });
-        cx.notify();
-    }
-
-    /// Close the commit menu even when focus has left it; it hands focus back
-    /// only if it still held it.
-    pub(super) fn close_commit_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(open) = self.commit_menu_open.take() {
-            let cancel = gpui_kit::base::actions::Cancel;
-            open.menu.focus_handle(cx).dispatch_action(&cancel, window, cx);
-            cx.notify();
-        }
-    }
-
-    /// The open commit menu, deferred above the window like the generic
-    /// context menu; the full-window layer keeps the history list from
-    /// scrolling out from under it.
-    pub(super) fn render_commit_menu(&self, window: &Window) -> Option<gpui_kit::AnyElement> {
-        let open = self.commit_menu_open.as_ref()?;
-        let size = window.bounds().size;
-        Some(
-            gpui_kit::deferred(
-                gpui_kit::anchored().child(
-                    div()
-                        .w(size.width)
-                        .h(size.height)
-                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                        .child(
-                            gpui_kit::anchored()
-                                .position(open.position)
-                                .snap_to_window_with_margin(px(8.))
-                                .child(open.menu.clone()),
-                        ),
-                ),
-            )
-            .with_priority(gpui_kit::base::POPUP_PRIORITY)
-            .into_any_element(),
-        )
+            move |menu| commit_menu(menu, target, this),
+            window,
+            cx,
+        );
     }
 
     /// Queue `git checkout --detach` for one commit.

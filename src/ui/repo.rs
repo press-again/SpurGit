@@ -1,17 +1,18 @@
-//! Repository detail view: 200px section sidebar (History / Local Changes /
+//! Repository detail view: resizable section sidebar (History / Local Changes /
 //! Stashes as pages; Local Branches / Remotes / Tags as collapsible lists)
 //! plus the section content.
 
 use super::*;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, Sizable as _};
 use gpui_kit::{FontWeight, IntoElement, SharedString, StatefulInteractiveElement as _};
 
 use crate::i18n::t;
 use crate::model::RowState;
+
+use super::row_menu::row_menu_trigger;
 
 /// Height cap for one expanded sidebar list before it scrolls on its own.
 const SIDEBAR_LIST_MAX_H: f32 = 200.0;
@@ -479,18 +480,23 @@ impl SpurShell {
                 let name = info.name.clone();
                 let current = info.current;
                 let leaf = branch_tree::branch_leaf(&info.name);
-                sidebar_branch_row(ix, info, &leaf, 0, pinned_ctx.default.as_deref(), cx)
-                    .context_menu(move |menu, _, _| {
+                let sort = pinned_ctx.sort;
+                row_menu_trigger(
+                    sidebar_branch_row(ix, info, &leaf, 0, pinned_ctx.default.as_deref(), cx),
+                    format!("branch:{name}"),
+                    entity.clone(),
+                    move |menu| {
                         super::branch_menu::branch_menu(
                             menu,
                             name.clone(),
                             current,
                             true,
-                            pinned_ctx.sort,
+                            sort,
                             entity.clone(),
                         )
-                    })
-                    .into_any_element()
+                    },
+                )
+                .into_any_element()
             })
             .collect();
         let pinned_header: Option<gpui_kit::AnyElement> = (!pinned_infos.is_empty()).then(|| {
@@ -641,7 +647,7 @@ impl SpurShell {
                 let (name, hash) = &tags[ix];
                 let entity = this.clone();
                 let tag = name.clone();
-                sidebar_row(format!("tag-{ix}"), ("tag", ix), 0, cx)
+                let row = sidebar_row(format!("tag-{ix}"), ("tag", ix), 0, cx)
                     .child(
                         div()
                             .flex_1()
@@ -660,11 +666,11 @@ impl SpurShell {
                             .text_size(px(TEXT_XS))
                             .text_color(text_faint(cx))
                             .child(hash.clone()),
-                    )
-                    .context_menu(move |menu, _, _| {
-                        super::tag_dialog::tag_menu(menu, tag.clone(), entity.clone())
-                    })
-                    .into_any_element()
+                    );
+                row_menu_trigger(row, format!("tag:{tag}"), entity.clone(), move |menu| {
+                    super::tag_dialog::tag_menu(menu, tag.clone(), entity.clone())
+                })
+                .into_any_element()
             },
         );
         if all_tags.len() <= 20 {
@@ -934,7 +940,7 @@ fn sidebar_remote_row(
     let menu_remote = name.clone();
     let menu_url = url.clone();
     let hover_url = url.clone();
-    sidebar_row(format!("remote-{name}"), ("remote", ix), 0, cx)
+    let row = sidebar_row(format!("remote-{name}"), ("remote", ix), 0, cx)
         .on_click(move |_, _, cx| {
             this.update(cx, |shell, cx| {
                 let opening = shell.remote_folders_closed.remove(&toggle_key);
@@ -981,16 +987,16 @@ fn sidebar_remote_row(
                 .text_size(px(TEXT_XS))
                 .text_color(text_faint(cx))
                 .child(format!("({count})")),
+        );
+    row_menu_trigger(row, format!("remote:{name}"), menu_this.clone(), move |menu| {
+        super::remote_dialog::remote_menu(
+            menu,
+            menu_remote.clone(),
+            menu_url.clone(),
+            menu_this.clone(),
         )
-        .context_menu(move |menu, _, _| {
-            super::remote_dialog::remote_menu(
-                menu,
-                menu_remote.clone(),
-                menu_url.clone(),
-                menu_this.clone(),
-            )
-        })
-        .into_any_element()
+    })
+    .into_any_element()
 }
 
 /// One remote-tracking-branch row (indented under its remote). The caller
@@ -1172,8 +1178,11 @@ fn branch_row_at(
             let pinned = ctx.pinned_names.contains(&branch_name);
             let current = branches[*index].current;
             let sort = ctx.sort;
-            sidebar_branch_row(ix, &branches[*index], leaf, *depth, ctx.default.as_deref(), cx)
-                .context_menu(move |menu, _, _| {
+            row_menu_trigger(
+                sidebar_branch_row(ix, &branches[*index], leaf, *depth, ctx.default.as_deref(), cx),
+                format!("branch:{branch_name}"),
+                entity.clone(),
+                move |menu| {
                     super::branch_menu::branch_menu(
                         menu,
                         branch_name.clone(),
@@ -1182,8 +1191,9 @@ fn branch_row_at(
                         sort,
                         entity.clone(),
                     )
-                })
-                .into_any_element()
+                },
+            )
+            .into_any_element()
         }
     }
 }
@@ -1202,26 +1212,26 @@ fn remote_row_at(
             let entity = this.clone();
             let remote = branches[*index].remote.clone();
             let branch_name = branches[*index].name.clone();
-            sidebar_remote_branch_row(ix, leaf, cx)
-                .context_menu(move |menu, _, _| {
-                    let entity = entity.clone();
-                    let remote = remote.clone();
-                    let name = branch_name.clone();
-                    menu.item(context_menu_item(
-                        t().context_checkout.into(),
-                        IconName::GitBranch,
-                        move |_, _, cx| {
-                            let remote = remote.clone();
-                            let name = name.clone();
-                            entity
-                                .update(cx, |shell, cx| {
-                                    shell.checkout_remote_branch(remote, name, cx)
-                                })
-                                .ok();
-                        },
-                    ))
-                })
-                .into_any_element()
+            let key = format!("remote-branch:{remote}/{branch_name}");
+            row_menu_trigger(sidebar_remote_branch_row(ix, leaf, cx), key, this, move |menu| {
+                let entity = entity.clone();
+                let remote = remote.clone();
+                let name = branch_name.clone();
+                menu.item(context_menu_item(
+                    t().context_checkout.into(),
+                    IconName::GitBranch,
+                    move |_, _, cx| {
+                        let remote = remote.clone();
+                        let name = name.clone();
+                        entity
+                            .update(cx, |shell, cx| {
+                                shell.checkout_remote_branch(remote, name, cx)
+                            })
+                            .ok();
+                    },
+                ))
+            })
+            .into_any_element()
         }
     }
 }

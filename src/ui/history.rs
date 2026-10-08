@@ -512,9 +512,9 @@ impl SpurShell {
         let selected = self.selected_commit.clone();
         let highlight = self.history_target.clone();
         let menu_target = self
-            .commit_menu_open
+            .row_menu_open
             .as_ref()
-            .map(|open| open.hash.clone());
+            .map(|open| open.key.clone());
         // The checked-out branch names the ref chip that gets emphasized.
         let current_branch: Option<SharedString> = self
             .active_snapshot()

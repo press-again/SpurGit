@@ -50,6 +50,7 @@ pub(crate) mod remote_dialog;
 pub(crate) mod repo;
 pub(crate) mod reset_dialog;
 pub(crate) mod roots;
+pub(crate) mod row_menu;
 pub(crate) mod settings;
 pub(crate) mod shortcuts;
 pub(crate) mod stash;
@@ -343,7 +344,7 @@ pub struct SpurShell {
     /// Rename-branch dialog state and its name input.
     rename_request: Option<branch_menu::RenameRequest>,
     rebase_request: Option<branch_menu::RebaseRequest>,
-    commit_menu_open: Option<commit_menu::OpenCommitMenu>,
+    row_menu_open: Option<row_menu::OpenRowMenu>,
     branch_rename_input: Entity<InputState>,
     /// Delete-branch confirm (first) and force-delete confirm (unmerged).
     branch_delete_request: Option<branch_menu::BranchDeleteRequest>,
@@ -1071,7 +1072,7 @@ impl SpurShell {
             pinned_branch_rows: Rc::new(Vec::new()),
             rename_request: None,
             rebase_request: None,
-            commit_menu_open: None,
+            row_menu_open: None,
             branch_rename_input,
             branch_delete_request: None,
             branch_delete_refused: None,
@@ -2519,7 +2520,7 @@ impl SpurShell {
         cx: &mut Context<Self>,
         then: fn(&mut Self, &mut Window, &mut Context<Self>),
     ) {
-        self.close_commit_menu(window, cx);
+        self.close_row_menu(window, cx);
         if window.context_stack().iter().any(|c| c.contains("PopupMenu")) {
             window.dispatch_action(Box::new(gpui_kit::base::actions::Cancel), cx);
             cx.defer_in(window, then);
@@ -3233,7 +3234,7 @@ impl Render for SpurShell {
             // Menu explainer: root-level like the other overlays, so its
             // window-space row coordinates land exactly (the card itself
             // paints deferred, beside the menu rather than under it).
-            .children(self.render_commit_menu(window))
+            .children(self.render_row_menu(window))
             .children(self.render_explainer(window, cx));
         let root = root.children(Root::render_notification_layer(window, cx));
 
