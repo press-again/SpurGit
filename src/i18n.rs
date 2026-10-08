@@ -378,6 +378,11 @@ pub struct Strings {
     pub alert_timeout_10s: &'static str,
     pub alert_timeout_manual: &'static str,
     pub alert_dismiss: &'static str,
+    pub settings_updates: &'static str,
+    pub settings_updates_hint: &'static str,
+    pub update_none: &'static str,
+    pub update_install: &'static str,
+    pub update_open_settings: &'static str,
     pub settings_token_accent: &'static str,
     pub settings_token_accent_hint: &'static str,
     pub settings_token_background: &'static str,
@@ -987,6 +992,16 @@ impl Strings {
     }
 
     /// Settings Keyboard card status line.
+    pub fn update_available(&self, version: &str) -> String {
+        format!("Spur {version} is available")
+    }
+    pub fn update_current(&self, version: &str) -> String {
+        format!("Spur {version}")
+    }
+    pub fn update_failed(&self, err: &str) -> String {
+        format!("update failed: {err}")
+    }
+
     pub fn keymap_custom(&self, n: usize) -> String {
         if n == 1 {
             "1 custom binding".to_string()
@@ -1693,6 +1708,11 @@ pub static ENGLISH: Strings = Strings {
     alert_timeout_10s: "10 seconds",
     alert_timeout_manual: "Click to remove",
     alert_dismiss: "Dismiss",
+    settings_updates: "Updates",
+    settings_updates_hint: "Spur checks GitHub for new releases in the background",
+    update_none: "No newer release found",
+    update_install: "Update and restart",
+    update_open_settings: "Settings",
     settings_token_accent: "Accent",
     settings_token_accent_hint: "Buttons, links, and selection",
     settings_token_background: "Background",

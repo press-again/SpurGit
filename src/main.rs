@@ -20,6 +20,7 @@ mod settings;
 mod status;
 mod theme;
 mod ui;
+mod update;
 
 use std::borrow::Cow;
 

@@ -344,6 +344,9 @@ impl SpurShell {
                     )
                     .into_any_element(),
                     self.notifications_card(cx),
+                    section_heading(t().settings_updates, t().settings_updates_hint, cx)
+                        .into_any_element(),
+                    self.updates_card(cx),
                     section_heading(t().settings_keyboard, t().settings_keyboard_hint, cx)
                         .into_any_element(),
                     self.keyboard_card(cx),
@@ -857,6 +860,32 @@ impl SpurShell {
             t().settings_alerts,
             t().settings_alerts_hint,
             menu.into_any_element(),
+            cx,
+        )])
+    }
+
+    /// Updates card: current version, and the install button once the
+    /// background check found a newer release.
+    fn updates_card(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
+        let subtitle = match &self.update {
+            Some(release) => t().update_available(&release.version),
+            None => t().update_none.to_string(),
+        };
+        let control = match self.update {
+            Some(_) => Button::new("install-update")
+                .label(t().update_install)
+                .small()
+                .cursor_pointer()
+                .loading(self.updating)
+                .on_click(cx.listener(|this, _, _, cx| this.install_update(cx)))
+                .into_any_element(),
+            None => div().into_any_element(),
+        };
+        settings_card(vec![settings_row(
+            IconName::Download,
+            &t().update_current(env!("CARGO_PKG_VERSION")),
+            &subtitle,
+            control,
             cx,
         )])
     }

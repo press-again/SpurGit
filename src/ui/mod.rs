@@ -91,6 +91,8 @@ const HEADER_H: f32 = 44.0; // Theme::HEADER_HEIGHT — section/sidebar headers
 /// changes, diff, details) follows external edits without waiting for the
 /// full 15 s round. Skipped while a query for the same repository is running.
 const ACTIVE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+/// How often to ask GitHub for a newer release (also once at startup).
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Inactive per-tab history sessions kept in memory (LRU); browsing more tabs
 /// than this drops the oldest session instead of retaining every commit.
 const HISTORY_CACHE_MAX: usize = 4;
@@ -594,6 +596,11 @@ pub struct SpurShell {
     undo_toast: Option<undo::UndoToast>,
     /// Invalidates the undo timer when a newer undoable op lands.
     undo_toast_gen: u64,
+    /// Newer GitHub release, if any; Settings offers to install it.
+    update: Option<crate::update::Release>,
+    /// The update toast is up (until dismissed or Settings opens).
+    update_toast: bool,
+    updating: bool,
     /// Recently-discarded backups per repository.
     discarded: HashMap<String, Vec<undo::DiscardedBackup>>,
     next_discarded_id: u64,
@@ -1137,6 +1144,9 @@ impl SpurShell {
             redo_slots: HashMap::new(),
             undo_toast: None,
             undo_toast_gen: 0,
+            update: None,
+            update_toast: false,
+            updating: false,
             discarded: HashMap::new(),
             next_discarded_id: 0,
             discarded_open: false,
@@ -1227,6 +1237,7 @@ impl SpurShell {
         }
         shell.spawn_auto_refresh_tick(cx);
         shell.spawn_active_refresh_tick(cx);
+        shell.spawn_update_check(cx);
         // First run: one wink while the empty state is up; the welcome line
         // stays until a root or a repository arrives.
         if !shell.welcomed {
@@ -1670,6 +1681,62 @@ impl SpurShell {
             if !alive {
                 return;
             }
+        })
+        .detach();
+    }
+
+    /// Check GitHub for a newer release at startup and every few hours; each
+    /// new version raises the update toast once. Failures (offline) only log.
+    fn spawn_update_check(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| loop {
+            let found = cx
+                .background_executor()
+                .spawn(async { crate::update::check() })
+                .await;
+            let alive = this
+                .update(cx, |this, cx| match found {
+                    Ok(Some(release)) => {
+                        if this.update.as_ref().map(|r| &r.version) != Some(&release.version) {
+                            this.update = Some(release);
+                            this.update_toast = true;
+                            cx.notify();
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(err) => log!("update check failed: {err}"),
+                })
+                .is_ok();
+            if !alive {
+                return;
+            }
+            cx.background_executor().timer(UPDATE_CHECK_INTERVAL).await;
+        })
+        .detach();
+    }
+
+    /// Download and swap in the available release, then restart into it.
+    pub(super) fn install_update(&mut self, cx: &mut Context<Self>) {
+        let Some(release) = self.update.clone().filter(|_| !self.updating) else {
+            return;
+        };
+        self.updating = true;
+        self.update_toast = false;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    crate::update::install(&release).and_then(|app| crate::update::relaunch(&app))
+                })
+                .await;
+            this.update(cx, |this, cx| match result {
+                Ok(()) => cx.quit(),
+                Err(err) => {
+                    this.updating = false;
+                    this.note_error(t().update_failed(&err), cx);
+                }
+            })
+            .ok();
         })
         .detach();
     }
@@ -2774,6 +2841,82 @@ impl Render for SpurShell {
             )
         });
 
+        // Update offer: stays until dismissed; the action opens Settings,
+        // where the install button lives.
+        let update_card = self.update.as_ref().filter(|_| self.update_toast).map(|release| {
+            div()
+                .max_w(px(560.))
+                .rounded(px(PANEL_RADIUS))
+                .border_1()
+                .border_color(cx.theme().info.alpha(0.45))
+                .bg(cx.theme().popover)
+                .shadow_lg()
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .overflow_hidden()
+                .child(
+                    Icon::new(IconName::Download)
+                        .size(px(14.))
+                        .flex_none()
+                        .text_color(cx.theme().info),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_size(px(TEXT_SM))
+                        .text_color(text_primary(cx))
+                        .child(t().update_available(&release.version)),
+                )
+                .child(
+                    div()
+                        .id("update-toast-action")
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_size(px(TEXT_XS))
+                        .text_color(violet(cx))
+                        .child(t().update_open_settings)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.update_toast = false;
+                            this.open_settings(window, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("update-toast-dismiss")
+                        .aria_label(t().alert_dismiss)
+                        .cursor_pointer()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(18.))
+                        .h(px(18.))
+                        .rounded(px(4.))
+                        .bg(hover_blend("update-toast-dismiss", ink(0.0), ink(0.10)))
+                        .on_hover(hover_listener("update-toast-dismiss"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_toast = false;
+                            cx.notify();
+                        }))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(px(12.))
+                                .text_color(text_muted(cx)),
+                        ),
+                )
+                .with_animation(
+                    "update-toast",
+                    motion::animation(motion::MENU_IN),
+                    |el, t| el.opacity(t),
+                )
+        });
+
         let root = div()
             .id("root")
             .track_focus(&self.root_focus)
@@ -2988,6 +3131,7 @@ impl Render for SpurShell {
                             .flex()
                             .flex_col()
                             .gap(px(8.))
+                            .children(update_card)
                             .children(undo_card)
                             .children(error_toast),
                     ),
