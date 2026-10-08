@@ -1947,7 +1947,7 @@ impl SpurShell {
                     }
                     Some(OpWatch::Pull { .. }) => {
                         this.op_watch = None;
-                        if this.workspace_is_clean_and_current() {
+                        if this.open_tabs_are_clean_and_current() {
                             this.hold_face(
                                 brand::Face::Happy,
                                 Duration::from_millis(2500),

@@ -92,6 +92,9 @@ const HEADER_H: f32 = 44.0; // Theme::HEADER_HEIGHT — section/sidebar headers
 /// changes, diff, details) follows external edits without waiting for the
 /// full 15 s round. Skipped while a query for the same repository is running.
 const ACTIVE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+/// Opening the palette refreshes every repository it lists, unless a full
+/// round started this recently.
+const PALETTE_REFRESH_MIN_AGE: Duration = Duration::from_secs(10);
 /// How often to ask GitHub for a newer release (also once at startup).
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Inactive per-tab history sessions kept in memory (LRU); browsing more tabs
@@ -399,8 +402,11 @@ pub struct SpurShell {
     /// A manual Refresh also re-reads the open diff when the round finishes.
     refresh_diff_on_finish: bool,
     /// A round was requested while one was in flight (e.g. by a rescan);
-    /// it starts as soon as the current round finishes.
-    round_pending: bool,
+    /// it starts as soon as the current round finishes. `Some(true)` when
+    /// any of the requests wanted the whole workspace.
+    round_pending: Option<bool>,
+    /// When the last whole-workspace round started.
+    last_full_round: Option<Instant>,
     /// Active-repository display rows for the virtualized Local Changes and
     /// Local Branches lists; rebuilt only when the row or query serial changes.
     change_lists: Rc<crate::status::ChangeLists>,
@@ -1023,7 +1029,8 @@ impl SpurShell {
             history_revision: None,
             repo_refresh_in_flight: HashSet::new(),
             refresh_diff_on_finish: false,
-            round_pending: false,
+            round_pending: None,
+            last_full_round: None,
             repo_refresh_pending: HashMap::new(),
             change_lists: Rc::new(crate::status::ChangeLists::default()),
             change_rows: Rc::new(changes::ChangeRows::default()),
@@ -1421,10 +1428,25 @@ impl SpurShell {
         if self.change_selection.is_some() {
             self.refresh_diff_on_finish = true;
         }
-        self.start_refresh_round(cx);
+        self.start_refresh_round(true, cx);
     }
 
-    fn start_refresh_round(&mut self, cx: &mut Context<Self>) {
+    /// The palette lists every repository with its state: refresh them all
+    /// when it opens, unless a full round started moments ago.
+    pub(super) fn refresh_for_palette(&mut self, cx: &mut Context<Self>) {
+        if self.auto_refresh
+            && self
+                .last_full_round
+                .is_none_or(|at| at.elapsed() >= PALETTE_REFRESH_MIN_AGE)
+        {
+            self.start_refresh_round(true, cx);
+        }
+    }
+
+    /// One status round: over the whole workspace when `full`, otherwise only
+    /// over the open tabs (the periodic round; nothing else shows the state of
+    /// repositories that are not open).
+    fn start_refresh_round(&mut self, full: bool, cx: &mut Context<Self>) {
         if self.discovering
             || self.overview.refresh_loop.in_flight()
             || self.overview.rows().is_empty()
@@ -1432,11 +1454,12 @@ impl SpurShell {
             // A rescan finishing while a round runs must not lose its round:
             // remember it and start when the current one finishes.
             if self.overview.refresh_loop.in_flight() {
-                self.round_pending = true;
+                self.round_pending = Some(full || self.round_pending == Some(true));
             }
             return;
         }
-        self.overview.refresh_loop.round_started(Instant::now());
+        let active = self.active_repo_id();
+        let open_tabs: HashSet<&str> = self.tabs.iter().map(|key| key.0.as_str()).collect();
         // Rows with a targeted query already in flight (active poll or a
         // post-mutation refresh) are left to that query: starting another
         // would duplicate the Git work and stale the targeted ticket.
@@ -1444,15 +1467,23 @@ impl SpurShell {
             .overview
             .rows()
             .iter()
+            .filter(|row| full || open_tabs.contains(row.id.as_str()))
             .filter(|row| !self.repo_refresh_in_flight.contains(&row.id))
             .map(|row| (row.id.clone(), row.path.to_string_lossy().into_owned()))
             .collect();
+        let now = Instant::now();
+        self.overview.refresh_loop.round_started(now);
+        if full {
+            self.last_full_round = Some(now);
+        } else if targets.is_empty() {
+            // No open tab to read: keep the cadence without an empty round.
+            self.overview.refresh_loop.round_finished();
+            return;
+        }
         // Active/open tabs are collected first so the rows the user is
         // looking at stream in before the rest of the workspace.
         // Stable sort keeps the workspace order within each
         // priority class.
-        let active = self.active_repo_id();
-        let open_tabs: HashSet<&str> = self.tabs.iter().map(|key| key.0.as_str()).collect();
         targets.sort_by_key(|(id, _)| {
             if active.as_deref() == Some(id.as_str()) {
                 0
@@ -1542,7 +1573,7 @@ impl SpurShell {
                         if std::mem::take(&mut this.refresh_diff_on_finish) {
                             this.reload_diff(cx);
                         }
-                        let again = std::mem::take(&mut this.round_pending);
+                        let again = this.round_pending.take();
                         // Release the round's per-row ownership and run the
                         // targeted refreshes (and diff reloads) that were
                         // queued while it held them.
@@ -1558,9 +1589,9 @@ impl SpurShell {
                         for (id, reload) in pending {
                             this.refresh_repo(id, reload, cx);
                         }
-                        if again {
+                        if let Some(full) = again {
                             // A rescan asked for a round while this one ran.
-                            this.start_refresh_round(cx);
+                            this.start_refresh_round(full, cx);
                         }
                         cx.notify();
                     })
@@ -1644,7 +1675,8 @@ impl SpurShell {
                     return;
                 }
                 cx.notify();
-                this.start_refresh_round(cx);
+                // Newly discovered rows have no state yet: read them all.
+                this.start_refresh_round(true, cx);
             })
             .ok();
         })
@@ -1660,7 +1692,7 @@ impl SpurShell {
                         && !this.overview.rows().is_empty()
                         && this.overview.refresh_loop.should_start(Instant::now())
                     {
-                        this.start_refresh_round(cx);
+                        this.start_refresh_round(false, cx);
                     }
                 })
                 .is_ok();
@@ -1817,7 +1849,7 @@ impl SpurShell {
             Err(err) => self.note_error(t().log_settings_save_failed(&err), cx),
         }
         if self.auto_refresh {
-            self.start_refresh_round(cx);
+            self.start_refresh_round(false, cx);
         }
         cx.notify();
     }
@@ -2139,15 +2171,18 @@ impl SpurShell {
         self.running_op.as_ref().is_some_and(|running| running.network)
     }
 
-    /// Happy's condition: every known repository has
-    /// fresh data, no local changes and nothing behind.
-    fn workspace_is_clean_and_current(&self) -> bool {
-        let rows = self.overview.rows();
-        !rows.is_empty()
-            && rows.iter().all(|row| {
-                row.snapshot.as_ref().is_some_and(|collected| {
-                    collected.snapshot.behind == 0 && collected.snapshot.is_clean()
-                })
+    /// Happy's condition: every open tab has fresh data, no local changes
+    /// and nothing behind. Other repositories are only refreshed when the
+    /// palette shows them, so their state may be old.
+    fn open_tabs_are_clean_and_current(&self) -> bool {
+        !self.tabs.is_empty()
+            && self.tabs.iter().all(|key| {
+                self.overview
+                    .row(&key.0)
+                    .and_then(|row| row.snapshot.as_ref())
+                    .is_some_and(|collected| {
+                        collected.snapshot.behind == 0 && collected.snapshot.is_clean()
+                    })
             })
     }
 

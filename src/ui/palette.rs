@@ -143,6 +143,7 @@ impl SpurShell {
             window.focus(&self.root_focus, cx);
         }
         self.close_oplog(cx);
+        self.refresh_for_palette(cx);
         self.remember_dialog_focus(window, cx);
         self.palette_open = true;
         self.palette_closing = false;
