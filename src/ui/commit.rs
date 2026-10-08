@@ -215,14 +215,14 @@ impl SpurShell {
             .label(t().commit_button)
             .primary()
             .small()
+            .flex_none()
             .rounded(px(999.))
             .cursor_pointer()
             .disabled(!can_commit)
             .on_click(cx.listener(|this, _, _, cx| this.submit_commit(cx)));
-        // The tooltip explains the disabled state; the faint hint above
-        // covers the case where a disabled button eats the hover. It names
-        // the actual blocker: nothing staged, then an empty message. A
-        // commit in flight needs no explanation.
+        // The tooltip explains the disabled state. It names the actual
+        // blocker: nothing staged, then an empty message. A commit in flight
+        // needs no explanation.
         let blocker = if self.commit_in_flight {
             None
         } else if staged_empty {
@@ -244,9 +244,6 @@ impl SpurShell {
                 .as_deref()
                 .map(|owners| t().commit_as_warning(&active.profile.label, owners))
         });
-        let account_chip = (!self.profiles.is_empty())
-            .then(|| repo_path.as_deref().map(|path| self.account_chip(path, active_profile.as_ref(), cx)))
-            .flatten();
         panel
             .child(
                 div()
@@ -281,17 +278,6 @@ impl SpurShell {
                     .items_center()
                     .gap(px(8.))
                     .min_w_0()
-                    .children(account_chip)
-                    .children(staged_empty.then(|| {
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_size(px(TEXT_XS))
-                            .text_color(text_faint(cx))
-                            .child(t().commit_needs_staged)
-                    }))
                     .child(div().flex_1())
                     .child(
                         div()

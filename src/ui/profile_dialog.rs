@@ -217,8 +217,8 @@ impl SpurShell {
     }
 
     /// Footer at the bottom of the repository sidebar: which profile the
-    /// open repository commits as. Clicking the name opens the same choice
-    /// as the commit box. Hidden until a profile exists.
+    /// open repository commits as. Clicking the name picks another one.
+    /// Hidden until a profile exists.
     pub(super) fn sidebar_account(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
         if self.profiles.is_empty() {
             return None;
