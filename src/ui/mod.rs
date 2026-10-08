@@ -2316,6 +2316,11 @@ impl SpurShell {
                 Vec::new(),
             ),
         };
+        let same_repo = self
+            .detail_lists_for
+            .as_ref()
+            .is_some_and(|(previous, _)| *previous == id);
+        let rows_before = self.change_rows.clone();
         self.change_lists = Rc::new(lists);
         self.branches = Rc::new(branches);
         self.remote_branches = Rc::new(remote_branches);
@@ -2323,15 +2328,23 @@ impl SpurShell {
         self.detail_lists_for = Some((id, serial));
         self.rebuild_change_rows(cx);
         // A refresh can remove rows (staged, discarded, committed): drop them
-        // from the multi-selection and clear the diff focus when it is gone.
+        // from the multi-selection. When the diff focus is gone, move on to
+        // the next row of its section so staging file after file flows.
         self.change_selected
             .retain(|selection| self.change_lists.contains(&selection.path, selection.staged));
-        if self
+        if let Some(gone) = self
             .change_selection
-            .as_ref()
-            .is_some_and(|selection| !self.change_lists.contains(&selection.path, selection.staged))
+            .take_if(|selection| !self.change_lists.contains(&selection.path, selection.staged))
         {
-            self.change_selection = None;
+            let next = same_repo
+                .then(|| changes::next_selection(&rows_before, &self.change_rows, &gone))
+                .flatten();
+            if let Some(next) = next {
+                self.change_selected = vec![next.clone()];
+                self.change_selection = Some(next);
+                self.change_anchor = None;
+                self.load_diff(cx);
+            }
         }
         // The selection's conflict flag follows the refreshed lists: a path
         // that is no longer unmerged leaves the resolver for a normal diff.

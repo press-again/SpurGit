@@ -597,6 +597,31 @@ impl ChangeRows {
     }
 }
 
+/// The row to show after `gone` left its section: the first row that
+/// followed it in `before` and is still listed in `after`, else the nearest
+/// one above it. `None` when the section has no rows left.
+pub(super) fn next_selection(
+    before: &ChangeRows,
+    after: &ChangeRows,
+    gone: &Selection,
+) -> Option<Selection> {
+    fn visible(rows: &ChangeRows, staged: bool) -> Vec<&ChangeItem> {
+        (0..rows.len(staged)).filter_map(|ix| rows.item(staged, ix)).collect()
+    }
+    let staged = gone.staged;
+    let old = visible(before, staged);
+    let at = old.iter().position(|item| item.path == gone.path)?;
+    let now: HashMap<&[u8], &ChangeItem> = visible(after, staged)
+        .into_iter()
+        .map(|item| (item.path.as_slice(), item))
+        .collect();
+    old[at + 1..]
+        .iter()
+        .chain(old[..at].iter().rev())
+        .find_map(|item| now.get(item.path.as_slice()))
+        .map(|item| Selection::from_item(item, staged))
+}
+
 /// Filter each section by path, keeping only the visible indices.
 pub(super) fn build_rows(lists: Rc<ChangeLists>, filter: &str) -> ChangeRows {
     let needle = filter.trim().to_lowercase();
@@ -2757,6 +2782,30 @@ mod tests {
         );
         assert_eq!(old.item(false, 0).unwrap().path, b"old/a.rs");
         assert_eq!(new.item(false, 0).unwrap().path, b"new/b.rs");
+    }
+
+    #[test]
+    fn next_selection_skips_rows_that_left_too() {
+        let lists = |names: &[&str]| {
+            let items = names.iter().map(|n| item(n, Change::Modified, false)).collect();
+            Rc::new(ChangeLists {
+                unstaged: items,
+                staged: Vec::new(),
+            })
+        };
+        let gone = |name: &str| Selection::from_item(&item(name, Change::Modified, false), false);
+        let before = build_rows(lists(&["a", "b", "c", "d"]), "");
+        // "b" and "c" were staged together: the next survivor is "d".
+        let after = build_rows(lists(&["a", "d"]), "");
+        let next = next_selection(&before, &after, &gone("b")).expect("next row");
+        assert_eq!(next.path, b"d".to_vec());
+        // The last row falls back to the nearest one above.
+        let after = build_rows(lists(&["a", "b", "c"]), "");
+        let next = next_selection(&before, &after, &gone("d")).expect("previous row");
+        assert_eq!(next.path, b"c".to_vec());
+        // Nothing left.
+        let after = build_rows(lists(&[]), "");
+        assert!(next_selection(&before, &after, &gone("a")).is_none());
     }
 
     #[test]
