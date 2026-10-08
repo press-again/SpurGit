@@ -29,6 +29,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # The app compares its Cargo version against the tag to find updates.
+      - shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "v$version" = "${{ github.ref_name }}" ] || { echo "tag ${{ github.ref_name }} != Cargo.toml $version"; exit 1; }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
