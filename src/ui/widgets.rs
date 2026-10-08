@@ -244,7 +244,8 @@ pub(super) fn flag_chip(
         FlagColor::Accent => violet(cx),
     };
     let text = text.into();
-    let tooltip: gpui_kit::SharedString = flag.label().into();
+    let tooltip: gpui_kit::SharedString =
+        format!("{}: {}", flag.label(), flag.description()).into();
     div()
         .id(gpui_kit::SharedString::from(format!(
             "flag-{}",

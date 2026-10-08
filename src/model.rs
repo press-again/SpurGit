@@ -72,6 +72,24 @@ impl Flag {
         }
     }
 
+    /// What the flag means, for tooltips.
+    pub fn description(self) -> &'static str {
+        match self {
+            Flag::Clean => "no local changes",
+            Flag::Stash => "there are stashed changes in this repository",
+            Flag::Untracked => "new files Git doesn't track yet",
+            Flag::Modified => "tracked files have changes (staged or not)",
+            Flag::AddedStaged => "new files are staged for the next commit",
+            Flag::Deleted => "tracked files were deleted",
+            Flag::Renamed => "staged files were renamed",
+            Flag::Conflicted => "files have merge conflicts to resolve",
+            Flag::Diverged => "local and remote both have new commits; pull before pushing",
+            Flag::Ahead => "local commits not pushed yet",
+            Flag::Behind => "remote commits not pulled yet",
+            Flag::UpstreamMissing => "the tracked remote branch no longer exists",
+        }
+    }
+
     /// Color role for rendering: (semantic role, symbol). Color reinforces,
     /// never replaces, the symbol itself.
     pub fn color_role(self) -> FlagColor {
