@@ -136,6 +136,13 @@ impl SpurShell {
             }
             return;
         }
+        // Close any dialog first so Escape closes only the palette, not
+        // something it left open beneath. The dialog's focus goes with it.
+        if self.modal_fade.target() > 0.0 {
+            self.close_modal(cx);
+            window.focus(&self.root_focus, cx);
+        }
+        self.close_oplog(cx);
         self.remember_dialog_focus(window, cx);
         self.palette_open = true;
         self.palette_closing = false;

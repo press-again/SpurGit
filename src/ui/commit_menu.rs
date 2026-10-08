@@ -323,6 +323,16 @@ impl SpurShell {
         cx.notify();
     }
 
+    /// Close the commit menu even when focus has left it; it hands focus back
+    /// only if it still held it.
+    pub(super) fn close_commit_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(open) = self.commit_menu_open.take() {
+            let cancel = gpui_kit::base::actions::Cancel;
+            open.menu.focus_handle(cx).dispatch_action(&cancel, window, cx);
+            cx.notify();
+        }
+    }
+
     /// The open commit menu, deferred above the window like the generic
     /// context menu; the full-window layer keeps the history list from
     /// scrolling out from under it.

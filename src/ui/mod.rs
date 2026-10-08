@@ -2451,6 +2451,24 @@ impl SpurShell {
     /// Capture the focus that should return when the overlay closes. Called
     /// only when opening from a fully closed state, so a palette <-> roots
     /// switch keeps the original destination.
+    /// Right-click menus only close on Escape or an outside click, so a
+    /// shortcut overlay would open underneath one: close the menu first and
+    /// run `then` once it has handed focus back.
+    fn close_menu_then(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: fn(&mut Self, &mut Window, &mut Context<Self>),
+    ) {
+        self.close_commit_menu(window, cx);
+        if window.context_stack().iter().any(|c| c.contains("PopupMenu")) {
+            window.dispatch_action(Box::new(gpui_kit::base::actions::Cancel), cx);
+            cx.defer_in(window, then);
+        } else {
+            then(self, window, cx);
+        }
+    }
+
     fn remember_dialog_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.palette_open && !self.roots_open && !self.palette_closing {
             self.dialog_previous_focus = window.focused(cx);
@@ -2931,7 +2949,7 @@ impl Render for SpurShell {
             .text_color(cx.theme().foreground)
             .text_size(px(TEXT_MD))
             .on_action(cx.listener(|this, _: &TogglePalette, window, cx| {
-                this.toggle_palette(window, cx);
+                this.close_menu_then(window, cx, Self::toggle_palette);
             }))
             .on_action(cx.listener(|this, _: &oplog::ToggleOpLog, _, cx| {
                 this.toggle_oplog(cx);
@@ -2940,19 +2958,19 @@ impl Render for SpurShell {
                 this.undo_active_repo(cx);
             }))
             .on_action(cx.listener(|this, _: &shortcuts::ShowShortcuts, window, cx| {
-                this.toggle_shortcuts(window, cx);
+                this.close_menu_then(window, cx, Self::toggle_shortcuts);
             }))
             .on_action(cx.listener(|this, _: &shortcuts::ShowHistory, window, cx| {
-                this.show_history(window, cx);
+                this.close_menu_then(window, cx, Self::show_history);
             }))
             .on_action(cx.listener(|this, _: &shortcuts::ShowChanges, window, cx| {
-                this.show_changes(window, cx);
+                this.close_menu_then(window, cx, Self::show_changes);
             }))
             .on_action(cx.listener(|this, _: &shortcuts::ShowStashes, window, cx| {
-                this.show_stashes(window, cx);
+                this.close_menu_then(window, cx, Self::show_stashes);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-                this.toggle_settings(window, cx);
+                this.close_menu_then(window, cx, Self::toggle_settings);
             }))
             .on_action(cx.listener(|this, _: &ClosePalette, window, cx| {
                 if this.hunk_discard.is_some() {
