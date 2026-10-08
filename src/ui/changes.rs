@@ -33,12 +33,24 @@ const CHANGE_ROW_H: f32 = 32.0;
 const SECTION_HEADER_H: f32 = 30.0;
 /// Empty-note reserve: an explanatory note must stay visible.
 const SECTION_NOTE_H: f32 = 48.0;
+/// Vertical padding above and below a section's file list.
+const SECTION_LIST_PAD_Y: f32 = 4.0;
+
+/// Height of `count` file rows including the list padding, so the last
+/// row's highlight is never clipped.
+fn rows_h(count: usize) -> f32 {
+    if count == 0 {
+        0.0
+    } else {
+        count as f32 * CHANGE_ROW_H + 2.0 * SECTION_LIST_PAD_Y
+    }
+}
 
 /// Minimum section height: the header, up to three rows, and room for
 /// an explanatory note when one shows. Pure, unit-tested.
 pub(super) fn section_min_h(count: usize, has_note: bool) -> f32 {
     SECTION_HEADER_H
-        + (count.min(3) as f32) * CHANGE_ROW_H
+        + rows_h(count.min(3))
         + if count == 0 && has_note {
             SECTION_NOTE_H
         } else {
@@ -58,7 +70,7 @@ pub(super) fn section_heights(
 ) -> (f32, f32) {
     fn natural(count: usize, note: bool) -> f32 {
         SECTION_HEADER_H
-            + count as f32 * CHANGE_ROW_H
+            + rows_h(count)
             + if count == 0 && note {
                 SECTION_NOTE_H
             } else {
@@ -866,7 +878,7 @@ fn change_section(
             .flex_1()
             .min_h_0()
             .px(px(6.))
-            .py(px(4.))
+            .py(px(SECTION_LIST_PAD_Y))
             .child(scrollbar_overlay(scrollbar_id, &scroll))
             .child(
                 gpui_kit::uniform_list(list_id, count, move |range, _window, cx| {
@@ -2646,11 +2658,12 @@ mod tests {
         // An explanatory note stays visible.
         assert!(section_min_h(0, true) > SECTION_HEADER_H);
         // Up to three rows, then capped.
-        assert_eq!(section_min_h(1, false), SECTION_HEADER_H + CHANGE_ROW_H);
+        // The list padding is included, so the last row is never clipped.
         assert_eq!(
-            section_min_h(3, false),
-            SECTION_HEADER_H + 3.0 * CHANGE_ROW_H
+            section_min_h(1, false),
+            SECTION_HEADER_H + CHANGE_ROW_H + 2.0 * SECTION_LIST_PAD_Y
         );
+        assert_eq!(section_min_h(3, false), SECTION_HEADER_H + rows_h(3));
         assert_eq!(section_min_h(6, false), section_min_h(3, false));
         assert_eq!(section_min_h(100, false), section_min_h(3, false));
     }
@@ -2660,7 +2673,7 @@ mod tests {
         // Everything fits: naturals (6 unstaged + header-only
         // staged + room to spare).
         let (hu, hs) = section_heights(6, 0, false, false, 2000.0);
-        assert_eq!(hu, SECTION_HEADER_H + 6.0 * CHANGE_ROW_H);
+        assert_eq!(hu, SECTION_HEADER_H + rows_h(6));
         assert_eq!(hs, SECTION_HEADER_H);
         // Unmeasured first frame behaves the same.
         assert_eq!(
@@ -2671,7 +2684,7 @@ mod tests {
         // 8 unstaged + empty staged in 300px keeps a header-only staged.
         let (hu, hs) = section_heights(8, 0, false, false, 300.0);
         assert_eq!(hs, SECTION_HEADER_H);
-        assert!(hu > section_min_h(8, false) && hu < SECTION_HEADER_H + 8.0 * CHANGE_ROW_H);
+        assert!(hu > section_min_h(8, false) && hu < SECTION_HEADER_H + rows_h(8));
         assert!((hu + hs - 300.0).abs() < 0.01);
         // Two big sections share evenly-ish above their floors.
         let (hu, hs) = section_heights(50, 50, false, false, 500.0);
@@ -2680,7 +2693,7 @@ mod tests {
         // A section capped at its natural height gives its unused share to
         // the other: 4 unstaged fit exactly, staged takes all the rest.
         let (hu, hs) = section_heights(4, 10, false, false, 480.0);
-        assert_eq!(hu, SECTION_HEADER_H + 4.0 * CHANGE_ROW_H);
+        assert_eq!(hu, SECTION_HEADER_H + rows_h(4));
         assert!((hu + hs - 480.0).abs() < 0.01, "no dead band: {hu} + {hs}");
         // Degenerate window: both headers keep their band before any rows.
         let (hu, hs) = section_heights(10, 0, false, false, 100.0);
