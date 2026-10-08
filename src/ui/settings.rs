@@ -53,6 +53,7 @@ impl SpurShell {
     /// palette action closes the palette with its exit fade on top).
     pub(super) fn show_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_open = true;
+        self.update_toast = false;
         self.theme_menu_open = false;
         self.theme_status = None;
         self.theme_save_gen = self.theme_save_gen.wrapping_add(1);
@@ -869,7 +870,8 @@ impl SpurShell {
     fn updates_card(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let subtitle = match &self.update {
             Some(release) => t().update_available(&release.version),
-            None => t().update_none.to_string(),
+            None if self.update_checked => t().update_none.to_string(),
+            None => t().update_unchecked.to_string(),
         };
         let control = match self.update {
             Some(_) => Button::new("install-update")

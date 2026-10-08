@@ -33,11 +33,13 @@ pub fn check() -> Result<Option<Release>, String> {
     let Some((suffix, _)) = ASSET else {
         return Ok(None);
     };
+    // Development builds cannot install, so they do not offer updates either.
+    let Ok(target) = install_target() else {
+        return Ok(None);
+    };
     // Leftover from the previous update (a running .exe cannot be deleted).
-    if let Ok(target) = install_target() {
-        let _ = remove(&old_path(&target));
-    }
-    let body = run(curl().arg(LATEST))?;
+    let _ = remove(&old_path(&target));
+    let body = run(curl().args(["--max-time", "30"]).arg(LATEST))?;
     let json: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     Ok(pick(&json, env!("CARGO_PKG_VERSION"), suffix))
 }
@@ -77,7 +79,11 @@ pub fn install(release: &Release) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let result = (|| {
         let zip = dir.join("update.zip");
-        run(curl().arg("-o").arg(&zip).arg(&release.url))?;
+        // Abort a stalled download (under 1 KB/s for 30 s) rather than capping its length.
+        run(curl()
+            .args(["--speed-limit", "1024", "--speed-time", "30", "-o"])
+            .arg(&zip)
+            .arg(&release.url))?;
         unpack(&zip, &dir)?;
         let fresh = dir.join(packed);
         if !fresh.exists() {
@@ -153,7 +159,8 @@ fn unpack(zip: &Path, dir: &Path) -> Result<(), String> {
 fn curl() -> Command {
     let mut cmd = Command::new("curl");
     // `--proto =https` also covers redirects to GitHub's asset host.
-    cmd.args(["-fsSL", "--proto", "=https", "-H", "User-Agent: SpurGit"]);
+    cmd.args(["-fsSL", "--proto", "=https", "--connect-timeout", "15"]);
+    cmd.args(["-H", "User-Agent: SpurGit"]);
     cmd
 }
 

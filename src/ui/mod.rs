@@ -598,6 +598,8 @@ pub struct SpurShell {
     undo_toast_gen: u64,
     /// Newer GitHub release, if any; Settings offers to install it.
     update: Option<crate::update::Release>,
+    /// A check has reached GitHub at least once.
+    update_checked: bool,
     /// The update toast is up (until dismissed or Settings opens).
     update_toast: bool,
     updating: bool,
@@ -1145,6 +1147,7 @@ impl SpurShell {
             undo_toast: None,
             undo_toast_gen: 0,
             update: None,
+            update_checked: false,
             update_toast: false,
             updating: false,
             discarded: HashMap::new(),
@@ -1695,14 +1698,16 @@ impl SpurShell {
                 .await;
             let alive = this
                 .update(cx, |this, cx| match found {
-                    Ok(Some(release)) => {
-                        if this.update.as_ref().map(|r| &r.version) != Some(&release.version) {
+                    Ok(found) => {
+                        this.update_checked = true;
+                        if let Some(release) = found.filter(|release| {
+                            this.update.as_ref().map(|r| &r.version) != Some(&release.version)
+                        }) {
                             this.update = Some(release);
                             this.update_toast = true;
-                            cx.notify();
                         }
+                        cx.notify();
                     }
-                    Ok(None) => {}
                     Err(err) => log!("update check failed: {err}"),
                 })
                 .is_ok();
@@ -2882,7 +2887,6 @@ impl Render for SpurShell {
                         .text_color(violet(cx))
                         .child(t().update_open_settings)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.update_toast = false;
                             this.open_settings(window, cx);
                         })),
                 )

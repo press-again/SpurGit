@@ -381,6 +381,7 @@ pub struct Strings {
     pub settings_updates: &'static str,
     pub settings_updates_hint: &'static str,
     pub update_none: &'static str,
+    pub update_unchecked: &'static str,
     pub update_install: &'static str,
     pub update_open_settings: &'static str,
     pub settings_token_accent: &'static str,
@@ -991,7 +992,6 @@ impl Strings {
         format!("Edit keymap.json to remap: {path}")
     }
 
-    /// Settings Keyboard card status line.
     pub fn update_available(&self, version: &str) -> String {
         format!("Spur {version} is available")
     }
@@ -1002,6 +1002,7 @@ impl Strings {
         format!("update failed: {err}")
     }
 
+    /// Settings Keyboard card status line.
     pub fn keymap_custom(&self, n: usize) -> String {
         if n == 1 {
             "1 custom binding".to_string()
@@ -1711,6 +1712,7 @@ pub static ENGLISH: Strings = Strings {
     settings_updates: "Updates",
     settings_updates_hint: "Spur checks GitHub for new releases in the background",
     update_none: "No newer release found",
+    update_unchecked: "Not checked yet",
     update_install: "Update and restart",
     update_open_settings: "Settings",
     settings_token_accent: "Accent",
