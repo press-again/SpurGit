@@ -37,6 +37,12 @@ pub struct Settings {
     /// File-list column width in logical pixels. Defaults to 300,
     /// clamped to 220–800 on load and on drag.
     pub changes_list_w: f32,
+    /// Repository sidebar width in logical pixels. Defaults to 200,
+    /// clamped to 160–480 on load and on drag.
+    pub sidebar_w: f32,
+    /// Share of the history column the commit details panel takes.
+    /// Defaults to half, clamped to 0.2–0.8.
+    pub commit_panel_ratio: f32,
     /// Soft-wrap long diff lines instead of horizontal scrolling.
     /// Defaults to off.
     pub diff_wrap: bool,
@@ -74,6 +80,8 @@ impl Default for Settings {
             branch_sort: BranchSort::default(),
             auto_refresh: true,
             changes_list_w: default_changes_list_w(),
+            sidebar_w: SIDEBAR_W_DEFAULT,
+            commit_panel_ratio: COMMIT_PANEL_RATIO_DEFAULT,
             diff_wrap: false,
             alert_timeout: AlertTimeout::default(),
             external_client: None,
@@ -133,6 +141,30 @@ pub fn clamp_changes_list_w(w: f32) -> f32 {
         return CHANGES_LIST_W_DEFAULT;
     }
     w.clamp(CHANGES_LIST_W_MIN, CHANGES_LIST_W_MAX)
+}
+
+/// Default sidebar width, and its clamp bounds.
+pub const SIDEBAR_W_DEFAULT: f32 = 200.0;
+pub const SIDEBAR_W_MIN: f32 = 160.0;
+pub const SIDEBAR_W_MAX: f32 = 480.0;
+
+pub fn clamp_sidebar_w(w: f32) -> f32 {
+    if !w.is_finite() {
+        return SIDEBAR_W_DEFAULT;
+    }
+    w.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX)
+}
+
+/// Default commit-panel share of the history column, and its clamp bounds.
+pub const COMMIT_PANEL_RATIO_DEFAULT: f32 = 0.5;
+pub const COMMIT_PANEL_RATIO_MIN: f32 = 0.2;
+pub const COMMIT_PANEL_RATIO_MAX: f32 = 0.8;
+
+pub fn clamp_commit_panel_ratio(ratio: f32) -> f32 {
+    if !ratio.is_finite() {
+        return COMMIT_PANEL_RATIO_DEFAULT;
+    }
+    ratio.clamp(COMMIT_PANEL_RATIO_MIN, COMMIT_PANEL_RATIO_MAX)
 }
 
 /// Split a pin entry back into its repo path and branch name.
@@ -344,6 +376,18 @@ pub fn set_changes_list_w(w: f32) -> Result<(), String> {
     save(&settings)
 }
 
+pub fn set_sidebar_w(w: f32) -> Result<(), String> {
+    let (mut settings, _) = load();
+    settings.sidebar_w = clamp_sidebar_w(w);
+    save(&settings)
+}
+
+pub fn set_commit_panel_ratio(ratio: f32) -> Result<(), String> {
+    let (mut settings, _) = load();
+    settings.commit_panel_ratio = clamp_commit_panel_ratio(ratio);
+    save(&settings)
+}
+
 pub fn set_diff_wrap(enabled: bool) -> Result<(), String> {
     let (mut settings, _) = load();
     settings.diff_wrap = enabled;
@@ -491,22 +535,23 @@ fn settings_from_value(value: Value) -> (Settings, Vec<String>) {
             true
         }
     };
-    let changes_list_w = match map.remove("changes_list_w") {
-        None => default_changes_list_w(),
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(w) => clamp_changes_list_w(w as f32),
+    let mut number = |key: &str, default: f32, clamp: fn(f32) -> f32| match map.remove(key) {
+        None => default,
+        Some(value) => match value.as_f64() {
+            Some(n) => clamp(n as f32),
             None => {
-                diagnostics.push(format!("\"changes_list_w\" must be a number, found {n}"));
-                default_changes_list_w()
+                diagnostics.push(format!("\"{key}\" must be a number, found {value}"));
+                default
             }
         },
-        Some(other) => {
-            diagnostics.push(format!(
-                "\"changes_list_w\" must be a number, found {other}"
-            ));
-            default_changes_list_w()
-        }
     };
+    let changes_list_w = number("changes_list_w", CHANGES_LIST_W_DEFAULT, clamp_changes_list_w);
+    let sidebar_w = number("sidebar_w", SIDEBAR_W_DEFAULT, clamp_sidebar_w);
+    let commit_panel_ratio = number(
+        "commit_panel_ratio",
+        COMMIT_PANEL_RATIO_DEFAULT,
+        clamp_commit_panel_ratio,
+    );
     let diff_wrap = match map.remove("diff_wrap") {
         None => false,
         Some(Value::Bool(enabled)) => enabled,
@@ -653,6 +698,8 @@ fn settings_from_value(value: Value) -> (Settings, Vec<String>) {
             branch_sort,
             auto_refresh,
             changes_list_w,
+            sidebar_w,
+            commit_panel_ratio,
             diff_wrap,
             alert_timeout,
             external_client,
@@ -728,14 +775,18 @@ fn settings_to_value(settings: &Settings) -> Value {
         Value::String(settings.branch_sort.key().to_string()),
     );
     map.insert("auto_refresh".to_string(), Value::Bool(settings.auto_refresh));
-    // Always finite (clamped on load and on save), so this cannot fail.
-    map.insert(
-        "changes_list_w".to_string(),
-        Value::Number(
-            serde_json::Number::from_f64(settings.changes_list_w as f64)
-                .unwrap_or(serde_json::Number::from(300)),
-        ),
-    );
+    for (key, value) in [
+        ("changes_list_w", settings.changes_list_w),
+        ("sidebar_w", settings.sidebar_w),
+        ("commit_panel_ratio", settings.commit_panel_ratio),
+    ] {
+        // Rounded so an f32 ratio is not written as 0.20000000298…; always
+        // finite (clamped on load and on save), so the number always exists.
+        let value = (value as f64 * 1000.0).round() / 1000.0;
+        if let Some(n) = serde_json::Number::from_f64(value) {
+            map.insert(key.to_string(), Value::Number(n));
+        }
+    }
     map.insert("diff_wrap".to_string(), Value::Bool(settings.diff_wrap));
     map.insert("welcomed".to_string(), Value::Bool(settings.welcomed));
     map.insert(
@@ -817,6 +868,8 @@ mod tests {
             branch_sort: BranchSort::Recent,
             auto_refresh: true,
             changes_list_w: 320.0,
+            sidebar_w: 240.0,
+            commit_panel_ratio: 0.35,
             diff_wrap: true,
             alert_timeout: AlertTimeout::TenSeconds,
             external_client: Some(ExternalClient {
@@ -1081,6 +1134,11 @@ mod tests {
             "NaN must not reach settings.json"
         );
 
+        assert_eq!(clamp_sidebar_w(50.0), SIDEBAR_W_MIN);
+        assert_eq!(clamp_sidebar_w(f32::INFINITY), SIDEBAR_W_DEFAULT);
+        assert_eq!(clamp_commit_panel_ratio(0.95), COMMIT_PANEL_RATIO_MAX);
+        assert_eq!(clamp_commit_panel_ratio(f32::NAN), COMMIT_PANEL_RATIO_DEFAULT);
+
         let dir = temp_dir("listwrap");
         let (mut settings, _) = load_from(&dir);
         settings.changes_list_w = 50.0;
@@ -1098,6 +1156,7 @@ mod tests {
         .unwrap();
         let (settings, diagnostics) = load_from(&dir);
         assert_eq!(settings.changes_list_w, CHANGES_LIST_W_DEFAULT);
+        assert_eq!(settings.sidebar_w, SIDEBAR_W_DEFAULT);
         assert!(!settings.diff_wrap);
         assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
     }

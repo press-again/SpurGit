@@ -10,7 +10,6 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::ContextMenuExt as _;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme, Icon, Sizable as _};
 use gpui_kit::{
     App, InteractiveElement as _, IntoElement, SharedString, StatefulInteractiveElement as _,
@@ -767,51 +766,10 @@ impl SpurShell {
             )
             .child(
                 // Column drag handle: a quiet grab strip between the
-                // file list and the diff. Drag resizes (clamped, persisted
-                // on release); double-click resets to the default. A plain
-                // div takes no keyboard focus, so tab order is unchanged.
-                div()
-                    .id("changes-col-handle")
+                // file list and the diff.
+                super::panes::pane_handle(super::panes::Pane::ChangesList, entity.clone())
                     .flex_none()
-                    .w(px(6.))
-                    .cursor_ew_resize()
-                    .bg(hover_blend("col-handle", ink(0.0), ink(0.10)))
-                    .on_hover(hover_listener("col-handle"))
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(t().col_resize_tooltip).build(window, cx)
-                    })
-                    .on_mouse_down(gpui_kit::MouseButton::Left, {
-                        let entity = entity.clone();
-                        move |event: &gpui_kit::MouseDownEvent, _: &mut Window, cx: &mut App| {
-                            // Pixels are logical in gpui: no scale-factor
-                            // division. The OS double-click count resets.
-                            let start_x = f32::from(event.position.x);
-                            let reset = event.click_count >= 2;
-                            entity
-                                .update(cx, |this, cx| {
-                                    if reset {
-                                        this.col_drag = None;
-                                        this.changes_list_w =
-                                            crate::settings::default_changes_list_w();
-                                        if let Err(err) =
-                                            crate::settings::set_changes_list_w(
-                                                this.changes_list_w,
-                                            )
-                                        {
-                                            this.note_error(
-                                                t().log_settings_save_failed(&err),
-                                                cx,
-                                            );
-                                        }
-                                    } else {
-                                        let start_w = this.list_col_w();
-                                        this.col_drag = Some((start_x, start_w));
-                                    }
-                                    cx.notify();
-                                })
-                                .ok();
-                        }
-                    }),
+                    .w(px(6.)),
             )
             .child(
                 // The right column clips its content: a wide diff must scroll
@@ -1151,16 +1109,6 @@ impl SpurShell {
             clamp_col_width(self.changes_list_w, self.viewport_w)
         } else {
             self.changes_list_w
-        }
-    }
-
-    /// End a column drag, persisting the width. No-op when not dragging.
-    pub(super) fn end_col_drag(&mut self, cx: &mut Context<Self>) {
-        if self.col_drag.take().is_some() {
-            if let Err(err) = crate::settings::set_changes_list_w(self.changes_list_w) {
-                self.note_error(t().log_settings_save_failed(&err), cx);
-            }
-            cx.notify();
         }
     }
 

@@ -243,8 +243,17 @@ impl SpurShell {
             CommitTab::Information => self.commit_information(cx),
             CommitTab::Changes => self.commit_changes(cx),
         };
-        div()
-            .flex_1()
+        // Until the history column is measured the panel keeps the even
+        // split it had before it became resizable.
+        let panel = if self.history_col_h > 0.0 {
+            div()
+                .flex_none()
+                .h(px(self.history_col_h * self.commit_panel_ratio))
+        } else {
+            div().flex_1()
+        };
+        panel
+            .relative()
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
@@ -254,6 +263,18 @@ impl SpurShell {
             .border_color(hairline(0.08))
             .child(self.commit_tab_strip(cx))
             .child(body)
+            // Grab strip over the top border, last so it paints on top.
+            .child(
+                super::panes::pane_handle(
+                    super::panes::Pane::CommitPanel,
+                    cx.entity().downgrade(),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(5.)),
+            )
             .into_any_element()
     }
 

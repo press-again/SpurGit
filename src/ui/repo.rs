@@ -204,7 +204,8 @@ impl SpurShell {
         };
 
         div()
-            .w(px(200.))
+            .relative()
+            .w(px(self.sidebar_w))
             .flex_none()
             .bg(cx.theme().sidebar)
             .border_r_1()
@@ -372,6 +373,15 @@ impl SpurShell {
                     })),
             )
             .children(self.sidebar_account(cx))
+            // Grab strip over the right border, last so it paints on top.
+            .child(
+                super::panes::pane_handle(super::panes::Pane::Sidebar, cx.entity().downgrade())
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right_0()
+                    .w(px(5.)),
+            )
     }
 
     fn render_repo_content(&self, cx: &mut Context<Self>) -> impl IntoElement {

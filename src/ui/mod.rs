@@ -42,6 +42,7 @@ pub(crate) mod icon_view;
 pub(crate) mod motion;
 pub(crate) mod oplog;
 pub(crate) mod palette;
+pub(crate) mod panes;
 pub(crate) mod pull_dialog;
 pub(crate) mod push_dialog;
 pub(crate) mod profile_dialog;
@@ -273,10 +274,17 @@ pub struct SpurShell {
     change_sections_h: f32,
     /// File-list column width in logical pixels (from settings).
     changes_list_w: f32,
+    /// Repository sidebar width in logical pixels (from settings).
+    sidebar_w: f32,
+    /// Share of the history column the commit panel takes (from settings).
+    commit_panel_ratio: f32,
+    /// Measured history column height (0 unmeasured); the commit panel's
+    /// share is taken of it.
+    history_col_h: f32,
     /// Soft-wrap long diff lines (from settings).
     diff_wrap: bool,
-    /// A column drag in progress, with its (start logical x, start width).
-    col_drag: Option<(f32, f32)>,
+    /// A pane resize in progress.
+    pane_drag: Option<panes::PaneDrag>,
     /// Window width in logical pixels at the last frame, so the file list
     /// honours its half-window ceiling after the window shrinks.
     viewport_w: f32,
@@ -958,8 +966,11 @@ impl SpurShell {
             external_client: settings.external_client.clone(),
             change_sections_h: 0.0,
             changes_list_w: settings.changes_list_w,
+            sidebar_w: settings.sidebar_w,
+            commit_panel_ratio: settings.commit_panel_ratio,
+            history_col_h: 0.0,
             diff_wrap: settings.diff_wrap,
-            col_drag: None,
+            pane_drag: None,
             viewport_w: 0.0,
             diff_visual: std::cell::RefCell::new(None),
             diff_wrap_w: 0.0,
@@ -3109,30 +3120,16 @@ impl Render for SpurShell {
             .on_drop(cx.listener(|this, paths: &gpui_kit::ExternalPaths, _, cx| {
                 this.handle_drop(paths, cx);
             }))
-            // File-list column drag: moves update live, release persists.
-            // A move without the button held ends a drag whose release happened
-            // outside the window.
+            // Pane resizes: moves update live, release persists.
             .on_mouse_move(cx.listener(
                 |this, event: &gpui_kit::MouseMoveEvent, window, cx| {
-                    let Some((start_x, start_w)) = this.col_drag else {
-                        return;
-                    };
-                    if event.pressed_button != Some(gpui_kit::MouseButton::Left) {
-                        this.end_col_drag(cx);
-                        return;
-                    }
-                    // Pixels are logical in gpui: no scale-factor division.
-                    let viewport_w = f32::from(window.viewport_size().width);
-                    let x = f32::from(event.position.x);
-                    this.changes_list_w =
-                        changes::clamp_col_width(start_w + x - start_x, viewport_w);
-                    cx.notify();
+                    this.drag_pane(event, window, cx);
                 },
             ))
             .on_mouse_up(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    this.end_col_drag(cx);
+                    this.end_pane_drag(cx);
                 }),
             )
             .child(self.render_chrome(window, cx))

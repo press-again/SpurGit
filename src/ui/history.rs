@@ -10,6 +10,7 @@ use super::*;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme, Sizable as _};
 use gpui_kit::{
@@ -600,6 +601,7 @@ impl SpurShell {
                 strip_left.child(flag_chip(flag, flag.symbol_with_counts(ahead, behind), cx));
         }
         strip_left = strip_left.child(t().commits_count(count));
+        let measure = cx.entity().downgrade();
 
         div()
             .flex()
@@ -608,6 +610,17 @@ impl SpurShell {
             .min_w_0()
             .min_h_0()
             .overflow_hidden()
+            .on_prepaint(move |bounds, _, cx| {
+                measure
+                    .update(cx, |this, cx| {
+                        let h = f32::from(bounds.size.height);
+                        if (this.history_col_h - h).abs() > 0.5 {
+                            this.history_col_h = h;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+            })
             .child(self.section_strip(
                 strip_left,
                 self.history_search_strip(cx),
